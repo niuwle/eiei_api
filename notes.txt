@@ -1,0 +1,61 @@
+NOTES
+
+source venv/bin/activate    
+uvicorn main:app --reload
+
+
+psql -d eiei_api
+
+GRANT USAGE ON SCHEMA public TO admin_eiei_user2;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO admin_eiei_user2;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO admin_eiei_user2;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO admin_eiei_user2;
+GRANT INSERT, UPDATE, DELETE ON tbl_200_messages TO admin_eiei_user2;
+GRANT SELECT ON tbl_200_messages TO admin_eiei_user2;
+
+GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO admin_eiei_user2;
+GRANT SELECT ON tbl_100_telegram_config TO admin_eiei_user2;
+
+
+
+drop    TABLE tbl_200_messages;
+
+CREATE TABLE tbl_200_messages
+  (
+     pk_messages  SERIAL PRIMARY KEY,
+     channel      VARCHAR(100),
+     bot_id       INTEGER NOT NULL,
+     user_id      INTEGER,
+     chat_id      INTEGER,
+     type         VARCHAR(100),
+     role         VARCHAR(100),
+     content_text VARCHAR(4000),
+     file_id      VARCHAR(4000),
+     message_date TIMESTAMP,
+     update_id    INTEGER,
+     message_id   INTEGER, 
+     is_processed   VARCHAR(1),
+     created_by   VARCHAR(1000),
+     created_on   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+     updated_by   VARCHAR(1000),
+     updated_on   TIMESTAMP
+  ); 
+
+CREATE TABLE tbl_100_telegram_config (
+    pk_bot                SERIAL PRIMARY KEY,
+    bot_name              VARCHAR(100),
+    bot_short_name        VARCHAR(100),
+    bot_description       VARCHAR(4000),
+    bot_token             VARCHAR(4000),
+    bot_assistant_prompt  VARCHAR(4000),
+    bot_pre_prompt        VARCHAR(4000),
+    bot_temperature       INTEGER,
+    bot_presence_penalty  INTEGER,
+    bot_frequency_penalty INTEGER,
+    bot_default_reply     VARCHAR(4000),
+    created_by            VARCHAR(1000),
+    created_on            TIMESTAMP,
+    updated_by            VARCHAR(1000),
+    updated_on            TIMESTAMP
+);

@@ -1,8 +1,6 @@
 from fastapi import APIRouter
+from .message_controller import router as message_router
 
 router = APIRouter()
 
-# Example route
-@router.get("/")
-async def root():
-    return {"message": "Hello World"}
+router.include_router(message_router)
