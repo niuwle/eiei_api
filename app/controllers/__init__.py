@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from .message_controller import router as message_router
+from app.routers.message_controller import router as message_router
 
 router = APIRouter()
 

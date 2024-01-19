@@ -42,7 +42,7 @@ Start of file: ./app/logging_config.py
 import logging
 
 def setup_logging():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 End of file: ./app/logging_config.py
 ___________
 ___________
@@ -217,10 +217,17 @@ def add_message(db, message_data):
     db.commit()
     db.refresh(db_message)
     return db_message
-
-def mark_message_processed(db: Session, message: tbl_msg):
-    message.processed = 'Y'
-    db.commit()End of file: ./app/database_operations.py
+    
+def mark_messages_processed(db: Session, chat_id: int, bot_id: int):
+    messages_to_update = db.query(tbl_msg).filter(
+        tbl_msg.chat_id == chat_id, 
+        tbl_msg.bot_id == bot_id, 
+        tbl_msg.is_processed == 'N'
+    )
+    for message in messages_to_update:
+        message.is_processed = 'Y'
+    db.commit()
+End of file: ./app/database_operations.py
 ___________
 ___________
 Start of file: ./app/controllers/message_controller.py
@@ -262,7 +269,7 @@ from datetime import datetime, timedelta
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.database_operations import get_bot_token, insert_response_message, mark_message_processed
+from app.database_operations import get_bot_token, insert_response_message, mark_messages_processed
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import send_telegram_message
 from app.models.message import tbl_msg
@@ -291,8 +298,11 @@ def process_queue():
             if response_text:
                 telegram_response = send_telegram_message(chat_id, response_text, bot_token)
                 logging.info(f'Response from Telegram: {telegram_response}')
-                mark_message_processed(db, message)
                 insert_response_message(db, 'TELEGRAM', bot_id, chat_id, response_text,'TEXT','ASSISTANT','Y')
+
+        # After processing all messages and sending responses, mark all messages as processed
+        if messages:
+            mark_messages_processed(db, chat_id, bot_id)
 
     except Exception as e:
         logging.error(f'Error in process_queue: {str(e)}')
@@ -350,6 +360,7 @@ def get_chat_completion(chat_id: int, bot_id: int, db: Session) -> Optional[str]
         response_data = response.json()
 
         logging.info("Received response from AI service.")
+        logging.debug("JSON from OpenROUTER: %s", response_data)
         return response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     except Exception as e:

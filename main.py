@@ -1,7 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
 from app.controllers import router as api_router
-from app.controllers.message_controller import router as message_router
+from app.routers.message_controller import router as message_router
 from app.scheduler import setup_scheduler
 from app.logging_config import setup_logging
 

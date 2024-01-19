@@ -1,4 +1,4 @@
-#app/controllers/message_controller.py
+#app/routers/message_controller.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
