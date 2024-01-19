@@ -22,7 +22,7 @@ def get_chat_completion(chat_id: int, bot_id: int, db: Session) -> Optional[str]
         response_data = response.json()
 
         logging.info("Received response from AI service.")
-        logging.debug("JSON fro OpenrOUTER for AI service: %s", response_data)
+        logging.debug("JSON from OpenROUTER: %s", response_data)
         return response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
     except Exception as e:

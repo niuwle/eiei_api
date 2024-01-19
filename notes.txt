@@ -59,3 +59,9 @@ CREATE TABLE tbl_100_telegram_config (
     updated_by            VARCHAR(1000),
     updated_on            TIMESTAMP
 );
+
+
+curl -X POST "http://localhost:8000/receive-message" \
+     -H "Content-Type: application/json" \
+     -d '{"chat_id": 12345, "user_id": 67890, "bot_id": 13579, "message_text": "remember my name?", "message_id": 101112, "channel": "TestChannel", "channel": "TestChannel", "update_id": 131415}'
+
