@@ -1,10 +1,14 @@
 NOTES
 
+cd ELLA_HOBS/EIEI_API/
 source venv/bin/activate    
 uvicorn main:app --reload
 
+./exportgpt.sh 
 
 psql -d eiei_api
+
+
 
 GRANT USAGE ON SCHEMA public TO admin_eiei_user2;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO admin_eiei_user2;
@@ -18,8 +22,22 @@ GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO admin_eiei_user2;
 GRANT SELECT ON tbl_100_telegram_config TO admin_eiei_user2;
 
 
+GRANT USAGE ON SCHEMA public TO eiei_ps_db_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO eiei_ps_db_user;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO eiei_ps_db_user;
 
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO eiei_ps_db_user;
+GRANT INSERT, UPDATE, DELETE ON tbl_200_messages TO eiei_ps_db_user;
+GRANT SELECT ON tbl_200_messages TO eiei_ps_db_user;
+
+GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO eiei_ps_db_user;
+GRANT SELECT ON tbl_100_telegram_config TO eiei_ps_db_user;
+
+
+
+truncate   TABLE tbl_200_messages;
 drop    TABLE tbl_200_messages;
+
 
 CREATE TABLE tbl_200_messages
   (
@@ -60,8 +78,84 @@ CREATE TABLE tbl_100_telegram_config (
     updated_on            TIMESTAMP
 );
 
+INSERT INTO tbl_100_telegram_config (
+    pk_bot,
+    bot_name,
+    bot_short_name,
+    bot_description,
+    bot_token,
+    bot_assistant_prompt,
+    bot_pre_prompt,
+    bot_temperature,
+    bot_presence_penalty,
+    bot_frequency_penalty,
+    bot_default_reply,
+    created_by,
+    created_on,
+    updated_by,
+    updated_on
+) VALUES (
+    13579, -- pk_bot
+    'Sample Bot', -- bot_name
+    'SampleBot', -- bot_short_name
+    'This is a description of Sample Bot.', -- bot_description
+    '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11', -- bot_token (replace with actual token)
+    'Hello! How can I assist you today?', -- bot_assistant_prompt
+    'Please provide detailed information so I can assist you better.', -- bot_pre_prompt
+    0.7, -- bot_temperature (0 to 1, adjust as needed)
+    0, -- bot_presence_penalty (0 to 1, adjust as needed)
+    0, -- bot_frequency_penalty (0 to 1, adjust as needed)
+    'I am sorry, I do not understand.', -- bot_default_reply
+    'admin', -- created_by
+    CURRENT_TIMESTAMP, -- created_on
+    'admin', -- updated_by
+    CURRENT_TIMESTAMP -- updated_on
+);
+
 
 curl -X POST "http://localhost:8000/receive-message" \
      -H "Content-Type: application/json" \
      -d '{"chat_id": 12345, "user_id": 67890, "bot_id": 13579, "message_text": "remember my name?", "message_id": 101112, "channel": "TestChannel", "channel": "TestChannel", "update_id": 131415}'
 
+
+curl -X POST "https://eiei-api.onrender.com/receive-message" \
+     -H "Content-Type: application/json" \
+     -d '{"chat_id": 12345, "user_id": 67890, "bot_id": 13579, "message_text": "remember my name?", "message_id": 101112, "channel": "TestChannel", "channel": "TestChannel", "update_id": 131415}'
+
+
+
+Please check that this workflow is true in all sentences to the following app, if not please just rewrite the code needed to accomodate
+Example Workflow:
+Receive and save the message in the database with is_processed='N'
+after that it Launchs the process_queue process
+the process_queue grabd the current timestamp and then  Wait for 3 seconds , then grabs the latest message form the user and checks if the message is older than the timestamp grabbed before then proceeds with the process if not then it quits
+proceed with the processing of the current message.
+First marks them with is_processed='P' for pending 
+ makes the needfull to call the ai completition function stuff, 
+then it sends the response of the ai  back to the user via telegram
+After processing, mark the message as is_processed='Y'
+
+
+
+AWS:
+
+pabluss89+newaws@gmail.com
+gQss4wKFLMXUWBn!US2ZA!oJ*oBmYdRF
+
+
+postgres:
+
+eiei_api_admin
+3G1RHiXOuV6PHXxdCwfOY97f7vw53fvs
+
+
+
+oracle apex
+
+admin
+wiA8%o*gDC37KRmo*HB&
+
+Connect postgres
+https://blogs.oracle.com/apex/post/connecting-your-apex-apps-to-non-oracle-databases-with-oracle-autonomous-database
+
+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

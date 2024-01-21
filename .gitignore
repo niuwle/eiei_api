@@ -1,3 +1,5 @@
 venv/
 __pycache__/
 .env
+notes.txt
+file_list.txt

@@ -1,6 +1,6 @@
 # app/models/telegram_config.py
 from sqlalchemy import Column, Integer, String, DateTime
-from app.database import Base
+from . import Base
 
 class TelegramConfig(Base):
     __tablename__ = 'tbl_100_telegram_config'

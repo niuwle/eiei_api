@@ -6,6 +6,7 @@ output_file="file_list.txt"
 # Function to print directory tree and files with dynamic headers
 print_directory_tree() {
   {
+    echo "Date and Time: $(date +"%d/%m/%Y %H.%M.%S")"
     echo "Directory Structure and Files in ./app:"
     tree -F ./app
     echo -e "\nDetails of Files:"

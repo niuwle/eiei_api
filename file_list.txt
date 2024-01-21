@@ -1,3 +1,4 @@
+Date and Time: 21/01/2024 15.59.07
 Directory Structure and Files in ./app:
 ./app/
 ├── __init__.py
@@ -5,7 +6,6 @@ Directory Structure and Files in ./app:
 ├── controllers/
 │   ├── __init__.py
 │   ├── ai_communication.py
-│   ├── message_controller.py
 │   ├── message_processing.py
 │   └── telegram_integration.py
 ├── database.py
@@ -15,13 +15,101 @@ Directory Structure and Files in ./app:
 │   ├── __init__.py
 │   ├── message.py
 │   └── telegram_config.py
-├── scheduler.py
-├── schemas.py
-└── utilities.py
+├── routers/
+│   ├── message_controller.py
+│   └── telegram-webhook.py
+└── schemas.py
 
-3 directories, 16 files
+4 directories, 15 files
 
 Details of Files:
+___________
+Start of file: ./app/routers/message_controller.py
+# app/routers/message_controller.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.models.message import tbl_msg
+from app.schemas import TextMessage
+from app.database import get_db, AsyncSession
+from app.database_operations import add_message
+from app.controllers.message_processing import process_queue
+import asyncio
+
+router = APIRouter()
+
+@router.post("/receive-message")
+async def receive_message(message: TextMessage):
+    async with get_db() as db:
+        try:
+            added_message = await add_message(db, message)
+            await process_queue(added_message.chat_id, db)
+            return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Value error occurred: {e}")
+        except HTTPException as http_err:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
+End of file: ./app/routers/message_controller.py
+___________
+___________
+Start of file: ./app/routers/telegram-webhook.py
+# app/routers/telegram-webhook.py
+import logging
+import os
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from app.schemas import TextMessage
+from app.database import get_db
+from app.database_operations import add_message
+from pydantic import BaseModel, ValidationError
+
+class TelegramWebhookPayload(BaseModel):
+    update_id: int
+    message: dict
+
+router = APIRouter()
+SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
+
+@router.post("/telegram-webhook/{token}")
+async def telegram_webhook(token: str, payload: TelegramWebhookPayload, db: AsyncSession = Depends(get_db)):
+    try:
+        if token != SECRET_TOKEN:
+            logging.warning("Invalid token in webhook request")
+            raise HTTPException(status_code=403, detail="Invalid token")
+
+        if not payload.message.get('text'):
+            logging.warning("No text in the message")
+            raise HTTPException(status_code=400, detail="No text found in message")
+
+        chat_id = payload.message['chat']['id']
+        user_id = payload.message['from']['id']
+        message_text = payload.message['text']
+        message_id = payload.message['message_id']
+
+        internal_message = TextMessage(
+            chat_id=chat_id,
+            user_id=user_id,
+            bot_id='YOUR_BOT_ID',  # Replace with your bot's ID
+            message_text=message_text,
+            message_id=message_id,
+            channel="TELEGRAM",
+            update_id=payload.update_id
+        )
+
+        added_message = await add_message(db, internal_message)
+        logging.info(f"Message processed successfully: {added_message}")
+        return {"status": "Message processed successfully", "details": added_message}
+    except ValidationError as ve:
+        logging.error(f"Validation error: {ve}")
+        raise HTTPException(status_code=422, detail=f"Validation error: {ve}")
+    except HTTPException as he:
+        logging.error(f"HTTP error: {he.detail}")
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+End of file: ./app/routers/telegram-webhook.py
+___________
 Binary File: ./app/.DS_Store
 ___________
 Start of file: ./app/config.py
@@ -47,34 +135,36 @@ End of file: ./app/logging_config.py
 ___________
 ___________
 Start of file: ./app/database.py
-#app/database.py
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-import os
 from app.config import SQLALCHEMY_DATABASE_URL
+from contextlib import asynccontextmanager
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("No SQLALCHEMY_DATABASE_URL set in environment")
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True)
 
-Base = declarative_base()
+AsyncSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    class_=AsyncSession
+)
 
-# Import tbl_msg after Base and engine are created
-from app.models.message import tbl_msg
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-End of file: ./app/database.py
+
+@asynccontextmanager
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield sessionEnd of file: ./app/database.py
 ___________
 Binary File: ./app/__init__.py
 ___________
 Start of file: ./app/models/__init__.py
-    End of file: ./app/models/__init__.py
+from sqlalchemy.ext.declarative import declarative_base
+Base = declarative_base()
+End of file: ./app/models/__init__.py
 ___________
 ___________
 Start of file: ./app/models/message.py
@@ -110,7 +200,7 @@ ___________
 Start of file: ./app/models/telegram_config.py
 # app/models/telegram_config.py
 from sqlalchemy import Column, Integer, String, DateTime
-from app.database import Base
+from . import Base
 
 class TelegramConfig(Base):
     __tablename__ = 'tbl_100_telegram_config'
@@ -149,41 +239,26 @@ class TextMessage(BaseModel):
 End of file: ./app/schemas.py
 ___________
 ___________
-Start of file: ./app/scheduler.py
-# app/scheduler.py
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from app.controllers.message_processing import check_new_messages
-
-def setup_scheduler():
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_new_messages, 'interval', seconds=5)
-    scheduler.start()
-End of file: ./app/scheduler.py
-___________
-___________
-Start of file: ./app/utilities.py
-# app/utilities.py
-from sqlalchemy.orm import Session
-from app.models.telegram_config import TelegramConfig  # Assuming you have this model
-from app.models.message import tbl_msg
-from datetime import datetime
-
-End of file: ./app/utilities.py
-___________
-___________
 Start of file: ./app/database_operations.py
-# app/database_operations.py
 from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from app.models.telegram_config import TelegramConfig
 from datetime import datetime
+from sqlalchemy.future import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.schemas import TextMessage
 
+async def get_bot_token(bot_id: int, db: AsyncSession) -> str:
+    try:
+        result = await db.execute(select(TelegramConfig).filter(TelegramConfig.pk_bot == bot_id))
+        bot_config = result.scalar_one_or_none()
+        return bot_config.bot_token if bot_config else ''
+    except SQLAlchemyError as e:
+        logging.error(f"Database error in get_bot_token: {str(e)}")
+        return ''
 
-def get_bot_token(bot_id: int, db: Session) -> str:
-    bot_config = db.query(TelegramConfig).filter(TelegramConfig.pk_bot == bot_id).first()
-    return bot_config.bot_token if bot_config else ''
-
-def insert_response_message(db: Session, channel: str, bot_id: int, chat_id: int, content_text: str, type: str, role: str, is_processed: str):
+async def insert_response_message(db: AsyncSession, channel: str, bot_id: int, chat_id: int, content_text: str, type: str, role: str, is_processed: str):
     new_message = tbl_msg(
         channel=channel,
         bot_id=bot_id,
@@ -193,13 +268,11 @@ def insert_response_message(db: Session, channel: str, bot_id: int, chat_id: int
         content_text=content_text,
         message_date=datetime.now(),
         is_processed=is_processed
-        
     )
     db.add(new_message)
-    db.commit()
+    await db.commit()
 
-    
-def add_message(db, message_data):
+async def add_message(db: AsyncSession, message_data: TextMessage) -> tbl_msg:
     db_message = tbl_msg(
         chat_id=message_data.chat_id,
         user_id=message_data.user_id,
@@ -214,47 +287,43 @@ def add_message(db, message_data):
         role='USER'
     )
     db.add(db_message)
-    db.commit()
-    db.refresh(db_message)
+    await db.commit()
+    await db.refresh(db_message)
     return db_message
-    
-def mark_messages_processed(db: Session, chat_id: int, bot_id: int):
-    messages_to_update = db.query(tbl_msg).filter(
-        tbl_msg.chat_id == chat_id, 
-        tbl_msg.bot_id == bot_id, 
-        tbl_msg.is_processed == 'N'
-    )
-    for message in messages_to_update:
-        message.is_processed = 'Y'
-    db.commit()
-End of file: ./app/database_operations.py
-___________
-___________
-Start of file: ./app/controllers/message_controller.py
-#app/controllers/message_controller.py
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from app.models.message import tbl_msg
-from app.schemas import TextMessage
-from app.database import get_db
-from app.database_operations import add_message
 
-router = APIRouter()
-
-@router.post("/receive-message", status_code=status.HTTP_200_OK)
-def receive_message(message: TextMessage, db: Session = Depends(get_db)):
+async def mark_messages_processed(db: AsyncSession, chat_id: int, bot_id: int):
     try:
-        added_message = add_message(db, message)
-        return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
-    except Exception as e:
-        # Return the error code along with the message
-        raise HTTPException(status_code=400, detail=f"An error occurred while saving the message. Error: {str(e)}")
-End of file: ./app/controllers/message_controller.py
+        messages_to_update = await db.execute(select(tbl_msg).filter(
+            tbl_msg.chat_id == chat_id, 
+            tbl_msg.bot_id == bot_id, 
+            tbl_msg.is_processed == 'N'
+        ))
+        for message in messages_to_update.scalars():
+            message.is_processed = 'Y'
+        await db.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"Database error in mark_messages_processed: {e}")
+        raise
+
+async def mark_messages_pending(db: AsyncSession, chat_id: int, bot_id: int):
+    try:
+        messages_to_update = await db.execute(select(tbl_msg).filter(
+            tbl_msg.chat_id == chat_id, 
+            tbl_msg.bot_id == bot_id, 
+            tbl_msg.is_processed == 'N'
+        ))
+        for message in messages_to_update.scalars():
+            message.is_processed = 'P'
+        await db.commit()
+    except SQLAlchemyError as e:
+        logging.error(f"Database error in mark_messages_pending: {e}")
+        raise
+End of file: ./app/database_operations.py
 ___________
 ___________
 Start of file: ./app/controllers/__init__.py
 from fastapi import APIRouter
-from .message_controller import router as message_router
+from app.routers.message_controller import router as message_router
 
 router = APIRouter()
 
@@ -263,108 +332,139 @@ End of file: ./app/controllers/__init__.py
 ___________
 ___________
 Start of file: ./app/controllers/message_processing.py
-# app/controllers/message_processing.py
 import logging
 from datetime import datetime, timedelta
-from fastapi import Depends
-from sqlalchemy.orm import Session
-from app.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.database_operations import get_bot_token, insert_response_message, mark_messages_processed
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import send_telegram_message
 from app.models.message import tbl_msg
+from sqlalchemy.future import select
+from sqlalchemy import func 
+import asyncio
 
-def process_queue():
-    db = next(get_db())
+# Create a logger
+logger = logging.getLogger(__name__)
+
+async def process_queue(chat_id: int, db: AsyncSession):
     try:
-        current_time = datetime.now()
-        logging.info("Processing queue at: %s", current_time)
+        # Grab the current timestamp
+        timestamp = datetime.now()
+        logger.info(f"Current timestamp: {timestamp}")
+
+        # Wait for 3 seconds
+        await asyncio.sleep(3)
+        logger.info("Waited for 3 seconds")
+
+        # Grab all unprocessed messages from the user
+        stmt = select(tbl_msg).where(
+            tbl_msg.chat_id == chat_id,
+            tbl_msg.is_processed == 'N'
+        ).order_by(tbl_msg.message_date.desc())
         
-        messages = db.query(tbl_msg).filter(
-            tbl_msg.is_processed == 'N', 
-            tbl_msg.message_date < current_time - timedelta(seconds=3)
-        ).all()
+        async with db:
+            result = await db.execute(stmt)
+            unprocessed_messages = result.scalars().all()
+            logger.info(f"Retrieved {len(unprocessed_messages)} unprocessed messages")
 
-        if not messages:
-            logging.info("No new messages to process.")
+        # Check if the latest message is older than the timestamp grabbed before
+        if unprocessed_messages and unprocessed_messages[0].message_date <= timestamp:
+            for message in unprocessed_messages:
+                # Mark the message as 'pending'
+                message.is_processed = 'P'
+                await db.commit()
+                logger.info(f"Marked message as pending: {message.chat_id}")
 
-        for message in messages:
-            logging.info(f"Processing message: {message.message_id}")
-            chat_id = message.chat_id
-            bot_id = message.bot_id
-            bot_token = get_bot_token(bot_id, db)
+                # Call the AI completion function
+                bot_id = message.bot_id
+                bot_token = await get_bot_token(bot_id, db)
+                response_text = await get_chat_completion(chat_id, bot_id, db)
+                logger.info(f"AI completion function returned: {response_text}")
 
-            response_text = get_chat_completion(chat_id, bot_id, db)
-            if response_text:
-                telegram_response = send_telegram_message(chat_id, response_text, bot_token)
-                logging.info(f'Response from Telegram: {telegram_response}')
-                insert_response_message(db, 'TELEGRAM', bot_id, chat_id, response_text,'TEXT','ASSISTANT','Y')
+                # Send the response back to the user via Telegram
+                if response_text:
+                    telegram_response = await send_telegram_message(chat_id, response_text, bot_token)
+                    logger.info(f'Response from Telegram: {telegram_response}')
+                    await insert_response_message(db, 'TELEGRAM', bot_id, chat_id, response_text, 'TEXT', 'ASSISTANT', 'Y')
 
-        # After processing all messages and sending responses, mark all messages as processed
-        if messages:
-            mark_messages_processed(db, chat_id, bot_id)
+                # Mark the message as processed
+                message.is_processed = 'Y'
+                await db.commit()
+                logger.info(f"Marked message as processed: {message.chat_id}")
+        else:
+            logger.info(f"Latest message found for chat_id {chat_id} is newer than the timestamp, skipping processing.")
 
     except Exception as e:
-        logging.error(f'Error in process_queue: {str(e)}')
-        db.rollback()
+        logger.error(f'Error in process_queue: {str(e)}')
+        await db.rollback()
         raise
     finally:
-        db.close()
-        logging.info("Queue processing completed.")
-
-def check_new_messages():
-    logging.info("Checking for new messages.")
-    process_queue()
+        await db.close()
+        logger.info("Queue processing completed.")
 End of file: ./app/controllers/message_processing.py
 ___________
 ___________
 Start of file: ./app/controllers/telegram_integration.py
-# app/controllers/telegram_integration.py
-import requests
+# ./app/controllers/telegram_integration.py
+import httpx
 import logging
 
-def send_telegram_message(chat_id: int, text: str, bot_token: str) -> str:
+async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> str:
     try:
         url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
         payload = {"chat_id": chat_id, "text": text}
-        response = requests.post(url, json=payload)
-        return response.text
+
+        async def post_message():
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload)
+            return response.text
+
+        return await post_message()
     except Exception as e:
         logging.error(f"Error sending Telegram message: {str(e)}")
-        return ""
-End of file: ./app/controllers/telegram_integration.py
+        return ""End of file: ./app/controllers/telegram_integration.py
 ___________
 ___________
 Start of file: ./app/controllers/ai_communication.py
-# app/controllers/ai_communication.py
-import requests
+# ./app/controllers/ai_communication.py
+from sqlalchemy.ext.asyncio import AsyncSession
+import httpx
 import logging
-from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from typing import Optional
 from app.config import OPENROUTER_TOKEN, OPENROUTER_MODEL, OPENROUTER_URL, ASSISTANT_PROMPT
+from httpx import HTTPError
+from sqlalchemy.future import select
 
-def get_chat_completion(chat_id: int, bot_id: int, db: Session) -> Optional[str]:
+# Create a logger
+logger = logging.getLogger(__name__)
+
+async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Optional[str]:
     try:
-        logging.info(f"Getting chat completion for chat_id: {chat_id} and bot_id: {bot_id}")
-        messages = db.query(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id).order_by(tbl_msg.message_date).all()
+        messages = await db.execute(select(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id).order_by(tbl_msg.message_date))
+        messages = messages.scalars().all()
+        logger.info(f"Retrieved {len(messages)} messages for chat_id {chat_id} and bot_id {bot_id}")
 
-        payload = {"model": OPENROUTER_MODEL, "max_tokens": 4024, "messages": [{"role": "system", "content": ASSISTANT_PROMPT}]}
-        for message in messages:
-            payload["messages"].append({"role": message.role.lower(), "content": message.content_text})
+        payload = {
+            "model": OPENROUTER_MODEL,
+            "max_tokens": 4024,
+            "messages": [{"role": "system", "content": ASSISTANT_PROMPT}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]
+        }
 
-        logging.debug("Payload for AI service: %s", payload)
+        async def fetch_response():
+            async with httpx.AsyncClient() as client:
+                response = await client.post(OPENROUTER_URL, json=payload, headers={"Authorization": f"Bearer {OPENROUTER_TOKEN}"})
+            return response.json()
 
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {OPENROUTER_TOKEN}"}
-        response = requests.post(OPENROUTER_URL, json=payload, headers=headers)
-        response_data = response.json()
-
-        logging.info("Received response from AI service.")
-        logging.debug("JSON from OpenROUTER: %s", response_data)
+        response_data = await fetch_response()
+        logger.info(f"Received response from OpenRouter: {response_data}")
         return response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
+    except HTTPError as e:
+        logger.error(f"HTTP error in get_chat_completion: {str(e)}")
+        return None
     except Exception as e:
-        logging.error(f"Error in get_chat_completion: {str(e)}")
+        logger.error(f"Unexpected error in get_chat_completion: {str(e)}")
         return None
 End of file: ./app/controllers/ai_communication.py
 ___________
