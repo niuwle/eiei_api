@@ -6,6 +6,7 @@ from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
+import logging
 
 async def get_bot_token(bot_id: int, db: AsyncSession) -> str:
     try:
@@ -49,30 +50,21 @@ async def add_message(db: AsyncSession, message_data: TextMessage) -> tbl_msg:
     await db.refresh(db_message)
     return db_message
 
-async def mark_messages_processed(db: AsyncSession, chat_id: int, bot_id: int):
+async def mark_message_status(db: AsyncSession, message_pk: int, new_status: str):
     try:
-        messages_to_update = await db.execute(select(tbl_msg).filter(
-            tbl_msg.chat_id == chat_id, 
-            tbl_msg.bot_id == bot_id, 
-            tbl_msg.is_processed == 'N'
-        ))
-        for message in messages_to_update.scalars():
-            message.is_processed = 'Y'
-        await db.commit()
-    except SQLAlchemyError as e:
-        logging.error(f"Database error in mark_messages_processed: {e}")
-        raise
+        # Retrieve the message by its primary key
+        result = await db.execute(select(tbl_msg).filter(tbl_msg.pk_messages == message_pk))
+        message = result.scalar_one_or_none()
 
-async def mark_messages_pending(db: AsyncSession, chat_id: int, bot_id: int):
-    try:
-        messages_to_update = await db.execute(select(tbl_msg).filter(
-            tbl_msg.chat_id == chat_id, 
-            tbl_msg.bot_id == bot_id, 
-            tbl_msg.is_processed == 'N'
-        ))
-        for message in messages_to_update.scalars():
-            message.is_processed = 'P'
-        await db.commit()
+        # Check if the message exists
+        if message:
+            # Update the is_processed status of the message
+            message.is_processed = new_status
+            await db.commit()
+            logging.info(f"Message with pk {message_pk} marked as {new_status}")
+        else:
+            logging.warning(f"No message found with pk {message_pk}")
+
     except SQLAlchemyError as e:
-        logging.error(f"Database error in mark_messages_pending: {e}")
+        logging.error(f"Database error in mark_message_status: {str(e)}")
         raise
