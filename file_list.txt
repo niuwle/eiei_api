@@ -1,4 +1,4 @@
-Date and Time: 21/01/2024 16.25.26
+Date and Time: 22/01/2024 10.43.19
 Directory Structure and Files in ./app:
 ./app/
 ├── __init__.py
@@ -126,11 +126,45 @@ End of file: ./app/config.py
 ___________
 ___________
 Start of file: ./app/logging_config.py
-# app/logging_config.py
 import logging
+from logging.config import dictConfig
 
 def setup_logging():
-    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging_config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'standard': {
+                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            },
+        },
+        'handlers': {
+            'default': {
+                'level': 'INFO',
+                'formatter': 'standard',
+                'class': 'logging.StreamHandler',
+            },
+            'sqlalchemy_engine': {
+                'level': 'WARN',  # Set to WARN to reduce SQL logs
+                'class': 'logging.StreamHandler',
+                'formatter': 'standard',
+            },
+        },
+        'loggers': {
+            '': {
+                'handlers': ['default'],
+                'level': 'INFO',
+                'propagate': True
+            },
+            'sqlalchemy.engine': {
+                'handlers': ['sqlalchemy_engine'],
+                'level': 'WARN',  # Adjust this level as needed
+                'propagate': False
+            },
+        }
+    }
+
+    dictConfig(logging_config)
 End of file: ./app/logging_config.py
 ___________
 ___________
@@ -324,7 +358,7 @@ ___________
 ___________
 Start of file: ./app/controllers/message_processing.py
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database_operations import get_bot_token, insert_response_message, mark_message_status
 from app.controllers.ai_communication import get_chat_completion
@@ -346,17 +380,21 @@ async def process_queue(chat_id: int, db: AsyncSession):
             result = await db.execute(stmt)
             unprocessed_messages = result.scalars().all()
 
-        if unprocessed_messages and unprocessed_messages[0].message_date <= timestamp:
-            for message in unprocessed_messages:
-                await process_message(message, db, chat_id)
+        if unprocessed_messages:
+            if unprocessed_messages[0].message_date <= timestamp:
+                for message in unprocessed_messages:
+                    await process_message(message, db, chat_id)
+            else:
+                logger.info(f"Skipping processing: Newest message for chat_id {chat_id} is newer than the timestamp.")
         else:
-            logger.info(f"No messages to process for chat_id {chat_id}")
+            logger.info(f"No unprocessed messages found for chat_id {chat_id}")
 
     except Exception as e:
         logger.error(f'Error processing queue: {e}')
         await db.rollback()
     finally:
         await db.close()
+
 
 async def process_message(message, db, chat_id):
     await mark_message_status(db, message.pk_messages, 'P')
@@ -377,21 +415,25 @@ Start of file: ./app/controllers/telegram_integration.py
 # ./app/controllers/telegram_integration.py
 import httpx
 import logging
+from app.config import TELEGRAM_API_URL
 
-async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> str:
+logger = logging.getLogger(__name__)
+
+async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> bool:
+    url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
+    payload = {"chat_id": chat_id, "text": text}
+
     try:
-        url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
-        payload = {"chat_id": chat_id, "text": text}
-
-        async def post_message():
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=payload)
-            return response.text
-
-        return await post_message()
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return True
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error sending Telegram message: {e}")
     except Exception as e:
-        logging.error(f"Error sending Telegram message: {str(e)}")
-        return ""End of file: ./app/controllers/telegram_integration.py
+        logger.error(f"Unexpected error in send_telegram_message: {str(e)}")
+    return False
+End of file: ./app/controllers/telegram_integration.py
 ___________
 ___________
 Start of file: ./app/controllers/ai_communication.py
