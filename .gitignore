@@ -3,3 +3,4 @@ __pycache__/
 .env
 notes.txt
 file_list.txt
+bot_pair.pem
