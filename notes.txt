@@ -8,19 +8,25 @@ uvicorn main:app --reload
 
 psql -d eiei_api
 
+CREATE DATABASE eieiapi;
 
+CREATE SCHEMA eiei_api;
 
-GRANT USAGE ON SCHEMA public TO admin_eiei_user2;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO admin_eiei_user2;
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO admin_eiei_user2;
+CREATE USER eiei_user_int WITH PASSWORD 'kLbuS6Pu9ECNHkFfN7ns';
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO admin_eiei_user2;
-GRANT INSERT, UPDATE, DELETE ON tbl_200_messages TO admin_eiei_user2;
-GRANT SELECT ON tbl_200_messages TO admin_eiei_user2;
+GRANT USAGE ON SCHEMA eiei_api TO eiei_user_int;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA eiei_api TO eiei_user_int;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA eiei_api TO eiei_user_int;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA eiei_api TO eiei_user_int;
 
-GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO admin_eiei_user2;
-GRANT SELECT ON tbl_100_telegram_config TO admin_eiei_user2;
+ALTER DEFAULT PRIVILEGES IN SCHEMA eiei_api GRANT ALL PRIVILEGES ON TABLES TO eiei_user_int;
+GRANT INSERT, UPDATE, DELETE ON eiei_api.tbl_200_messages TO eiei_user_int;
+GRANT SELECT ON eiei_api.tbl_200_messages TO eiei_user_int;
 
+GRANT INSERT, UPDATE, DELETE ON eiei_api.tbl_100_telegram_config TO eiei_user_int;
+GRANT SELECT ON eiei_api.tbl_100_telegram_config TO eiei_user_int;
+
+--
 
 GRANT USAGE ON SCHEMA public TO eiei_ps_db_user;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO eiei_ps_db_user;
@@ -35,11 +41,11 @@ GRANT SELECT ON tbl_100_telegram_config TO eiei_ps_db_user;
 
 
 
-truncate   TABLE tbl_200_messages;
-drop    TABLE tbl_200_messages;
+truncate   TABLE eiei_api.tbl_200_messages;
+drop    TABLE eiei_api.tbl_200_messages;
 
 
-CREATE TABLE tbl_200_messages
+CREATE TABLE eiei_api.tbl_200_messages
   (
      pk_messages  SERIAL PRIMARY KEY,
      channel      VARCHAR(100),
@@ -60,7 +66,7 @@ CREATE TABLE tbl_200_messages
      updated_on   TIMESTAMP
   ); 
 
-CREATE TABLE tbl_100_telegram_config (
+CREATE TABLE eiei_api.tbl_100_telegram_config (
     pk_bot                SERIAL PRIMARY KEY,
     bot_name              VARCHAR(100),
     bot_short_name        VARCHAR(100),
@@ -78,7 +84,7 @@ CREATE TABLE tbl_100_telegram_config (
     updated_on            TIMESTAMP
 );
 
-INSERT INTO tbl_100_telegram_config (
+INSERT INTO public.tbl_100_telegram_config (
     pk_bot,
     bot_name,
     bot_short_name,
@@ -95,11 +101,11 @@ INSERT INTO tbl_100_telegram_config (
     updated_by,
     updated_on
 ) VALUES (
-    13579, -- pk_bot
+    0, -- pk_bot
     'Sample Bot', -- bot_name
     'SampleBot', -- bot_short_name
     'This is a description of Sample Bot.', -- bot_description
-    '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11', -- bot_token (replace with actual token)
+    '6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw', -- bot_token (replace with actual token)
     'Hello! How can I assist you today?', -- bot_assistant_prompt
     'Please provide detailed information so I can assist you better.', -- bot_pre_prompt
     0.7, -- bot_temperature (0 to 1, adjust as needed)
@@ -137,18 +143,34 @@ After processing, mark the message as is_processed='Y'
 
 
 
+----------
 AWS:
-
+https://signin.aws.amazon.com/signin?redirect_uri=https%3A%2F%2Fus-east-1.console.aws.amazon.com%2Fec2%2Fhome%3Fregion%3Dus-east-1%26state%3DhashArgs%2523LaunchInstances%253A%26isauthcode%3Dtrue&client_id=arn%3Aaws%3Aiam%3A%3A015428540659%3Auser%2Fec2&forceMobileApp=0&code_challenge=F512pliZ5aHCWy-1b2C7FzLh7g6sXHNTyJq1QhK7Ev8&code_challenge_method=SHA-256
 pabluss89+newaws@gmail.com
 gQss4wKFLMXUWBn!US2ZA!oJ*oBmYdRF
 
-
+---
 postgres:
 
 eiei_api_admin
 3G1RHiXOuV6PHXxdCwfOY97f7vw53fvs
 
+psql -h eieiapi.cpua44ciw909.us-east-1.rds.amazonaws.com -U eiei_api_admin -d postgres
 
+---
+CMD
+
+ssh -i /Users/pablolebrero/ELLA_HOBS/EIEI_API/bot_pair.pem ec2-user@ec2-54-227-154-67.compute-1.amazonaws.com
+
+
+cd eiei_api/
+source venv/bin/activate    
+uvicorn main:app --reload
+
+
+scp -i /Users/pablolebrero/ELLA_HOBS/EIEI_API/bot_pair.pem /Users/pablolebrero/ELLA_HOBS/EIEI_API/.env ec2-user@ec2-54-227-154-67.compute-1.amazonaws.com:/home/ec2-user/eiei_api/eiei_api
+
+----------
 
 oracle apex
 
@@ -159,3 +181,22 @@ Connect postgres
 https://blogs.oracle.com/apex/post/connecting-your-apex-apps-to-non-oracle-databases-with-oracle-autonomous-database
 
 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
+
+
+
+---
+https://api.telegram.org/bot<YourBotToken>/setWebhook?url=<YourWebhookURL>
+
+
+
+https://eieiapi.cpua44ciw909.us-east-1.rds.amazonaws.com/
+
+
+curl -X POST "https://eiei-api.onrender.com/receive-message" \
+     -H "Content-Type: application/json" \
+     -d '{"chat_id": 12345, "user_id": 67890, "bot_id": 13579, "message_text": "Hi iM PABLO", "message_id": 101112, "channel": "TestChannel", "channel": "TestChannel", "update_id": 131415}'
+
+https://ec2-54-227-154-67.compute-1.amazonaws.com/
+
+
+https://api.telegram.org/bot6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw/setWebhook?url=https://eiei-api.onrender.com/telegram-webhook/test

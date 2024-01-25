@@ -1,10 +1,14 @@
 # app/routers/telegram-webhook.py
+import logging
 from fastapi import APIRouter, HTTPException
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import add_message
 from pydantic import BaseModel
+from app.controllers.message_processing import process_queue
 import os
+
+logger = logging.getLogger(__name__)
 
 class TelegramWebhookPayload(BaseModel):
     update_id: int
@@ -20,6 +24,7 @@ async def telegram_webhook(token: str, payload: TelegramWebhookPayload):
 
     if not payload.message.get('text'):
         raise HTTPException(status_code=400, detail="No text found in message")
+    logger.info(f"Got message {payload.message}")
 
     chat_id = payload.message['chat']['id']
     message_text = payload.message['text']
@@ -32,6 +37,9 @@ async def telegram_webhook(token: str, payload: TelegramWebhookPayload):
     )
 
     async with get_db() as db:
-        await add_message(db, internal_message)
-        return {"status": "Message processed successfully"}
-
+        try:
+            added_message = await add_message(db, message)
+            await process_queue(added_message.chat_id, db)
+            return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
