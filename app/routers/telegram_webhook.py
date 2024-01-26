@@ -1,6 +1,6 @@
 # app/routers/telegram-webhook.py
 import logging
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from app.schemas import TextMessage
 from app.database import get_db
@@ -25,7 +25,8 @@ router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
-async def telegram_webhook(request: Request, token: str, bot_short_name: str):
+async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str):
+
     # Read and log the raw request body
     raw_body = await request.body()
     logger.info(f"Raw JSON payload: {raw_body.decode('utf-8')}")
@@ -61,7 +62,7 @@ async def telegram_webhook(request: Request, token: str, bot_short_name: str):
 
         try:
             added_message = await add_message(db, internal_message)
-            await process_queue(added_message.chat_id, db)
+            background_tasks.add_task(process_queue, added_message.chat_id, db)
             return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")

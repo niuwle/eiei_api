@@ -1,4 +1,4 @@
-Date and Time: 22/01/2024 11.31.36
+Date and Time: 26/01/2024 12.26.26
 Directory Structure and Files in ./app:
 ./app/
 ├── __init__.py
@@ -17,7 +17,7 @@ Directory Structure and Files in ./app:
 │   └── telegram_config.py
 ├── routers/
 │   ├── message_controller.py
-│   └── telegram-webhook.py
+│   └── telegram_webhook.py
 └── schemas.py
 
 4 directories, 15 files
@@ -47,45 +47,75 @@ async def receive_message(message: TextMessage):
 End of file: ./app/routers/message_controller.py
 ___________
 ___________
-Start of file: ./app/routers/telegram-webhook.py
+Start of file: ./app/routers/telegram_webhook.py
 # app/routers/telegram-webhook.py
-from fastapi import APIRouter, HTTPException
+import logging
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_message
-from pydantic import BaseModel
+from app.database_operations import add_message, get_bot_id_by_short_name
+from app.controllers.message_processing import process_queue
 import os
+
+logger = logging.getLogger(__name__)
+
+class Message(BaseModel):
+    message_id: int
+    from_: dict = Field(None, alias='from')  # Using from_ to avoid conflict with Python keyword 'from'
+    chat: dict
+    date: int
+    text: str
 
 class TelegramWebhookPayload(BaseModel):
     update_id: int
-    message: dict
+    message: Message
 
 router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
-@router.post("/telegram-webhook/{token}")
-async def telegram_webhook(token: str, payload: TelegramWebhookPayload):
+@router.post("/telegram-webhook/{token}/{bot_short_name}")
+async def telegram_webhook(request: Request, token: str, bot_short_name: str):
+    # Read and log the raw request body
+    raw_body = await request.body()
+    logger.info(f"Raw JSON payload: {raw_body.decode('utf-8')}")
+
+    # Parse the body as your Pydantic model
+    try:
+        payload_dict = await request.json()  # Parse JSON body to dict
+        payload = TelegramWebhookPayload(**payload_dict)  # Convert dict to Pydantic model
+    except Exception as e:
+        logger.error(f"Error parsing request body: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
+
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")
 
-    if not payload.message.get('text'):
+    # Accessing 'text' from the nested 'message' object
+    if not payload.message.text:
         raise HTTPException(status_code=400, detail="No text found in message")
 
-    chat_id = payload.message['chat']['id']
-    message_text = payload.message['text']
-    message_id = payload.message['message_id']
-
-    internal_message = TextMessage(
-        chat_id=chat_id, user_id=0, bot_id=0, 
-        message_text=message_text, message_id=message_id, 
-        channel="TELEGRAM", update_id=payload.update_id
-    )
-
+    message_data = payload.message
+    chat_id = message_data.chat['id']
+    message_text = message_data.text
+    message_id = message_data.message_id
+    
     async with get_db() as db:
-        await add_message(db, internal_message)
-        return {"status": "Message processed successfully"}
+        bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
-End of file: ./app/routers/telegram-webhook.py
+        internal_message = TextMessage(
+            chat_id=chat_id, user_id=0, bot_id=bot_id,
+            message_text=message_text, message_id=message_id,
+            channel="TELEGRAM", update_id=payload.update_id  # Use the update_id from the payload
+        )
+
+        try:
+            added_message = await add_message(db, internal_message)
+            await process_queue(added_message.chat_id, db)
+            return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+End of file: ./app/routers/telegram_webhook.py
 ___________
 Binary File: ./app/.DS_Store
 ___________
@@ -182,7 +212,7 @@ ___________
 ___________
 Start of file: ./app/models/message.py
 #app/models/message.py
-from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, func
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -192,16 +222,16 @@ class tbl_msg(Base):
 
     pk_messages = Column(Integer, primary_key=True, index=True)  # Changed from id to pk_messages
     channel = Column(String(100))
-    bot_id = Column(Integer, nullable=False) # NOT NULL constraint specified here
-    chat_id = Column(Integer)
-    user_id = Column(Integer)
+    bot_id = Column(BigInteger, nullable=False) # NOT NULL constraint specified here
+    chat_id = Column(BigInteger)
+    user_id = Column(BigInteger)
     type = Column(String(100))
     role = Column(String(100))
     content_text = Column(String(4000))
     file_id = Column(String(4000))
     message_date = Column(DateTime) # This matches the TIMESTAMP in your SQL
-    update_id = Column(Integer)
-    message_id = Column(Integer)
+    update_id = Column(BigInteger)
+    message_id = Column(BigInteger)
     is_processed = Column(String(1))
     created_by = Column(String(1000))
     created_on = Column(DateTime, default=func.now()) # Default to the current timestamp
@@ -253,6 +283,7 @@ End of file: ./app/schemas.py
 ___________
 ___________
 Start of file: ./app/database_operations.py
+# app/routers/database_operations.py
 from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from app.models.telegram_config import TelegramConfig
@@ -271,6 +302,19 @@ async def get_bot_token(bot_id: int, db: AsyncSession) -> str:
     except SQLAlchemyError as e:
         logging.error(f"Database error in get_bot_token: {str(e)}")
         return ''
+
+async def get_bot_id_by_short_name(bot_short_name: str, db: AsyncSession) -> int:
+    try:
+        result = await db.execute(select(TelegramConfig.pk_bot).filter(TelegramConfig.bot_short_name == bot_short_name))
+        bot_id = result.scalar_one_or_none()
+        if bot_id is not None:
+            return bot_id
+        else:
+            logger.warning(f"No bot found with short name {bot_short_name}")
+            raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_bot_id_by_short_name: {str(e)}")
+        raise
 
 async def insert_response_message(db: AsyncSession, channel: str, bot_id: int, chat_id: int, content_text: str, type: str, role: str, is_processed: str):
     new_message = tbl_msg(
@@ -360,13 +404,16 @@ async def process_queue(chat_id: int, db: AsyncSession):
             unprocessed_messages = result.scalars().all()
 
         if unprocessed_messages:
+
+            logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
+
             if unprocessed_messages[0].message_date <= timestamp:
+                # Process messages as no new messages arrived in the last 3 seconds
                 for message in unprocessed_messages:
                     await process_message(message, db, chat_id)
             else:
-                logger.info(f"Skipping processing: Newest message for chat_id {chat_id} is newer than the timestamp.")
-        else:
-            logger.info(f"No unprocessed messages found for chat_id {chat_id}")
+                # Skip processing as a new message arrived during the wait
+                logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
 
     except Exception as e:
         logger.error(f'Error processing queue: {e}')
