@@ -8,6 +8,8 @@ uvicorn main:app --reload
 
 psql -d eiei_api
 
+PGPASSWORD=3G1RHiXOuV6PHXxdCwfOY97f7vw53fvs psql -h dpg-cml5g4a1hbls73c1rt50-a.oregon-postgres.render.com -U eiei_ps_db_user eiei_ps_db
+
 CREATE DATABASE eieiapi;
 
 CREATE SCHEMA eiei_api;
@@ -138,7 +140,7 @@ Please check that this workflow is true in all sentences to the following app, i
 Example Workflow:
 Receive and save the message in the database with is_processed='N'
 after that it Launchs the process_queue process
-the process_queue grabd the current timestamp and then  Wait for 3 seconds , then grabs the latest message form the user and checks if the message is older than the timestamp grabbed before then proceeds with the process if not then it quits
+the process_queue grabd the current timestamp and then  Wait for 3 seconds , then grabs the latest message form the user and checks if the message is older than the timestamp grabbed before (meaning no new messages arrived in those 3 sec) then proceeds with the process if not then it quits (a new messasge arrived and that new instance will handle to process all previous messages)
 proceed with the processing of the current message.
 First marks them with is_processed='P' for pending 
  makes the needfull to call the ai completition function stuff, 
@@ -177,6 +179,7 @@ scp -i /Users/pablolebrero/ELLA_HOBS/EIEI_API/bot_pair.pem /Users/pablolebrero/E
 ----------
 
 oracle apex
+workspace: eiei_api
 
 admin
 wiA8%o*gDC37KRmo*HB&
@@ -208,24 +211,31 @@ https://api.telegram.org/bot6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw/setWe
 
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
-     -d '{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"whats my name ?"}'
+     -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"test"}}'
+
+
+curl -X POST "https://eiei-api.onrender.com/telegram-webhook/test/SampleBot" \
+     -H "Content-Type: application/json" \
+     -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"test"}}'
 
 
 Test json from bot
-
 {
-   "message_id":403,
-   "from":{
-      "id":6449898496,
-      "is_bot":false,
-      "first_name":"P",
-      "language_code":"en"
-   },
-   "chat":{
-      "id":6449898496,
-      "first_name":"P",
-      "type":"private"
-   },
-   "date":1706204019,
-   "text":"test"
+  "update_id": 103499615,
+  "message": {
+    "message_id": 403,
+    "from": {
+      "id": 6449898496,
+      "is_bot": false,
+      "first_name": "P",
+      "language_code": "en"
+    },
+    "chat": {
+      "id": 6449898496,
+      "first_name": "P",
+      "type": "private"
+    },
+    "date": 1706204019,
+    "text": "test"
+  }
 }

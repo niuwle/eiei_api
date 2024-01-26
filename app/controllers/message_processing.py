@@ -22,13 +22,16 @@ async def process_queue(chat_id: int, db: AsyncSession):
             unprocessed_messages = result.scalars().all()
 
         if unprocessed_messages:
+
+            logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
+
             if unprocessed_messages[0].message_date <= timestamp:
+                # Process messages as no new messages arrived in the last 3 seconds
                 for message in unprocessed_messages:
                     await process_message(message, db, chat_id)
             else:
-                logger.info(f"Skipping processing: Newest message for chat_id {chat_id} is newer than the timestamp.")
-        else:
-            logger.info(f"No unprocessed messages found for chat_id {chat_id}")
+                # Skip processing as a new message arrived during the wait
+                logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
 
     except Exception as e:
         logger.error(f'Error processing queue: {e}')
