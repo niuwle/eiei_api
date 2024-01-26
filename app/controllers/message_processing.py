@@ -26,9 +26,7 @@ async def process_queue(chat_id: int, db: AsyncSession):
             logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
 
             if unprocessed_messages[0].message_date <= timestamp:
-                # Process messages as no new messages arrived in the last 3 seconds
-                for message in unprocessed_messages:
-                    await process_message(message, db, chat_id)
+                await process_message(unprocessed_messages, db, chat_id)
             else:
                 # Skip processing as a new message arrived during the wait
                 logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
@@ -40,15 +38,23 @@ async def process_queue(chat_id: int, db: AsyncSession):
         await db.close()
 
 
-async def process_message(message, db, chat_id):
-    await mark_message_status(db, message.pk_messages, 'P')
-    response_text = await get_chat_completion(chat_id, message.bot_id, db)
+async def process_message(messages, db, chat_id):
+    # Mark all messages as processed once
+    for message in messages:
+        await mark_message_status(db, message.pk_messages, 'P')
+
+    # Get chat completion only once
+    response_text = await get_chat_completion(chat_id, messages[0].bot_id, db)
 
     if response_text:
-        bot_token = await get_bot_token(message.bot_id, db)
+        bot_token = await get_bot_token(messages[0].bot_id, db)
+        # Send the response text to Telegram once
         await send_telegram_message(chat_id, response_text, bot_token)
-        await insert_response_message(db, 'TELEGRAM', message.bot_id, chat_id, response_text, 'TEXT', 'ASSISTANT', 'Y')
+        await insert_response_message(db, 'TELEGRAM', messages[0].bot_id, chat_id, response_text, 'TEXT', 'ASSISTANT', 'Y')
 
-    await mark_message_status(db, message.pk_messages, 'Y')
-    logger.info(f"Message {message.pk_messages} processed for chat_id {chat_id}")
+    # Mark all messages as processed again
+    for message in messages:
+        await mark_message_status(db, message.pk_messages, 'Y')
 
+    # Log the count of records processed
+    logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
