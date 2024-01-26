@@ -1,3 +1,4 @@
+# app/routers/database_operations.py
 from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from app.models.telegram_config import TelegramConfig
@@ -16,6 +17,19 @@ async def get_bot_token(bot_id: int, db: AsyncSession) -> str:
     except SQLAlchemyError as e:
         logging.error(f"Database error in get_bot_token: {str(e)}")
         return ''
+
+async def get_bot_id_by_short_name(bot_short_name: str, db: AsyncSession) -> int:
+    try:
+        result = await db.execute(select(TelegramConfig.pk_bot).filter(TelegramConfig.bot_short_name == bot_short_name))
+        bot_id = result.scalar_one_or_none()
+        if bot_id is not None:
+            return bot_id
+        else:
+            logger.warning(f"No bot found with short name {bot_short_name}")
+            raise
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_bot_id_by_short_name: {str(e)}")
+        raise
 
 async def insert_response_message(db: AsyncSession, channel: str, bot_id: int, chat_id: int, content_text: str, type: str, role: str, is_processed: str):
     new_message = tbl_msg(

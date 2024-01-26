@@ -1,5 +1,5 @@
 #app/models/message.py
-from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, func
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -9,16 +9,16 @@ class tbl_msg(Base):
 
     pk_messages = Column(Integer, primary_key=True, index=True)  # Changed from id to pk_messages
     channel = Column(String(100))
-    bot_id = Column(Integer, nullable=False) # NOT NULL constraint specified here
-    chat_id = Column(Integer)
-    user_id = Column(Integer)
+    bot_id = Column(BigInteger, nullable=False) # NOT NULL constraint specified here
+    chat_id = Column(BigInteger)
+    user_id = Column(BigInteger)
     type = Column(String(100))
     role = Column(String(100))
     content_text = Column(String(4000))
     file_id = Column(String(4000))
     message_date = Column(DateTime) # This matches the TIMESTAMP in your SQL
-    update_id = Column(Integer)
-    message_id = Column(Integer)
+    update_id = Column(BigInteger)
+    message_id = Column(BigInteger)
     is_processed = Column(String(1))
     created_by = Column(String(1000))
     created_on = Column(DateTime, default=func.now()) # Default to the current timestamp

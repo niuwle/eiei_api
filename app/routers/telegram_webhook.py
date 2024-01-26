@@ -1,45 +1,57 @@
 # app/routers/telegram-webhook.py
 import logging
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_message
-from pydantic import BaseModel
+from app.database_operations import add_message, get_bot_id_by_short_name
 from app.controllers.message_processing import process_queue
 import os
 
 logger = logging.getLogger(__name__)
 
 class TelegramWebhookPayload(BaseModel):
-    update_id: int
-    message: dict
+    message_id: int
+    from_: dict = None  # Using from_ to avoid conflict with Python keyword 'from'
+    chat: dict
+    date: int
+    text: str
+
+    # Mapping 'from' field in JSON to 'from_' in the model
+    class Config:
+        fields = {
+            'from_': 'from'
+        }
 
 router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
-@router.post("/telegram-webhook/{token}")
-async def telegram_webhook(token: str, payload: TelegramWebhookPayload):
+@router.post("/telegram-webhook/{token}/{bot_short_name}")
+async def telegram_webhook(token: str, bot_short_name: str, payload: TelegramWebhookPayload):
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")
 
-    if not payload.message.get('text'):
+    logger.info(f"Got message {payload.text}")
+
+    if not payload.text:  # Directly accessing 'text' from payload now
         raise HTTPException(status_code=400, detail="No text found in message")
-    logger.info(f"Got message {payload.message}")
 
-    chat_id = payload.message['chat']['id']
-    message_text = payload.message['text']
-    message_id = payload.message['message_id']
-
-    internal_message = TextMessage(
-        chat_id=chat_id, user_id=0, bot_id=0, 
-        message_text=message_text, message_id=message_id, 
-        channel="TELEGRAM", update_id=payload.update_id
-    )
+    chat_id = payload.chat['id']
+    message_text = payload.text
+    message_id = payload.message_id
 
     async with get_db() as db:
+        bot_id = await get_bot_id_by_short_name(bot_short_name, db)
+
+        internal_message = TextMessage(
+            chat_id=chat_id, user_id=0, bot_id=bot_id,
+            message_text=message_text, message_id=message_id,
+            channel="TELEGRAM", update_id=0  # Assuming update_id is not part of the new payload structure
+        )
+
         try:
-            added_message = await add_message(db, message)
-            await process_queue(added_message.chat_id, db)
+            added_message = await add_message(db, internal_message)
+            await process_queue(added_message.chat_id, db)  # Passing bot_id if needed
             return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")

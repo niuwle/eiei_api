@@ -28,37 +28,37 @@ GRANT SELECT ON eiei_api.tbl_100_telegram_config TO eiei_user_int;
 
 --
 
-GRANT USAGE ON SCHEMA public TO eiei_ps_db_user;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO eiei_ps_db_user;
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO eiei_ps_db_user;
+GRANT USAGE ON SCHEMA public TO admin_eiei_user2;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO admin_eiei_user2;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO admin_eiei_user2;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO eiei_ps_db_user;
-GRANT INSERT, UPDATE, DELETE ON tbl_200_messages TO eiei_ps_db_user;
-GRANT SELECT ON tbl_200_messages TO eiei_ps_db_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO admin_eiei_user2;
+GRANT INSERT, UPDATE, DELETE ON tbl_200_messages TO admin_eiei_user2;
+GRANT SELECT ON tbl_200_messages TO admin_eiei_user2;
 
-GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO eiei_ps_db_user;
-GRANT SELECT ON tbl_100_telegram_config TO eiei_ps_db_user;
+GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO admin_eiei_user2;
+GRANT SELECT ON tbl_100_telegram_config TO admin_eiei_user2;
 
 
 
 truncate   TABLE eiei_api.tbl_200_messages;
-drop    TABLE eiei_api.tbl_200_messages;
+drop    TABLE tbl_200_messages;
 
 
-CREATE TABLE eiei_api.tbl_200_messages
+CREATE TABLE  tbl_200_messages
   (
      pk_messages  SERIAL PRIMARY KEY,
      channel      VARCHAR(100),
-     bot_id       INTEGER NOT NULL,
-     user_id      INTEGER,
-     chat_id      INTEGER,
+     bot_id       BIGINT NOT NULL,
+     user_id      BIGINT,
+     chat_id      BIGINT,
      type         VARCHAR(100),
      role         VARCHAR(100),
      content_text VARCHAR(4000),
      file_id      VARCHAR(4000),
      message_date TIMESTAMP,
-     update_id    INTEGER,
-     message_id   INTEGER, 
+     update_id    BIGINT,
+     message_id   BIGINT, 
      is_processed   VARCHAR(1),
      created_by   VARCHAR(1000),
      created_on   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -83,6 +83,10 @@ CREATE TABLE eiei_api.tbl_100_telegram_config (
     updated_by            VARCHAR(1000),
     updated_on            TIMESTAMP
 );
+
+
+
+truncate   TABLE tbl_100_telegram_config;
 
 INSERT INTO public.tbl_100_telegram_config (
     pk_bot,
@@ -200,3 +204,28 @@ https://ec2-54-227-154-67.compute-1.amazonaws.com/
 
 
 https://api.telegram.org/bot6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw/setWebhook?url=https://eiei-api.onrender.com/telegram-webhook/test
+
+
+curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
+     -H "Content-Type: application/json" \
+     -d '{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"whats my name ?"}'
+
+
+Test json from bot
+
+{
+   "message_id":403,
+   "from":{
+      "id":6449898496,
+      "is_bot":false,
+      "first_name":"P",
+      "language_code":"en"
+   },
+   "chat":{
+      "id":6449898496,
+      "first_name":"P",
+      "type":"private"
+   },
+   "date":1706204019,
+   "text":"test"
+}
