@@ -203,7 +203,7 @@ curl -X POST "https://eiei-api.onrender.com/receive-message" \
 https://ec2-54-227-154-67.compute-1.amazonaws.com/
 
 
-https://api.telegram.org/bot6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw/setWebhook?url=https://eiei-api.onrender.com/telegram-webhook/test
+https://api.telegram.org/bot6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw/setWebhook?url=https://eiei-api.onrender.com/telegram-webhook/test/SampleBot
 
 
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
