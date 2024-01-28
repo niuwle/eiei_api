@@ -62,7 +62,7 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
 
         # Check if transcribed text is empty
         if not transcribed_text:
-            error_message = "Transcription failed or returned empty result."
+            error_message = "[Audio]:...////"
             logger.error(error_message)
 
             # Update the database with an error message

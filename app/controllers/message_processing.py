@@ -10,6 +10,7 @@ from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
 from app.schemas import TextMessage
 import asyncio
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +94,21 @@ async def process_message(messages, db, chat_id):
     logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
 
 
-def humanize_response(response_text: str) -> str:
-    """
-    This function takes the AI's response text and transforms it into a more
-    human-like, casual chat style.
-    """
-    # Splitting the text into sentences
-    sentences = response_text.split('. ')
-    # Removing initial exclamation and question marks
-    sentences = [s.lstrip('!?') for s in sentences]
-    # Joining the sentences with a new line to simulate separate message sending
-    humanized_text = '\n'.join(sentences)
+def humanize_response(text: str) -> str:
+    # Using regular expression to split the text into sentences at '.', '?', and '!'
+    # Lookahead assertion is used to keep the punctuation marks
+    sentences = re.split(r'(?<=[.?!])\s+', text)
+
+    # Removing initial Spanish question marks (¿), exclamation marks (¡) and processing each sentence
+    formatted_sentences = []
+    for s in sentences:
+        if s:
+            s = s.lstrip('¿¡')  # Remove leading special characters
+            s = re.sub(r'(\d+\.)', r'\n\1', s)  # Add newline before numbers followed by a period
+            s = re.sub(r'(?<=[^\d\n])([A-Z][^.!?]*[.!?])', r'\n\1', s)  # Add newline before certain sentences
+            formatted_sentences.append(s)
+
+    # Joining the formatted sentences with a new line to simulate separate message sending
+    humanized_text = '\n'.join(formatted_sentences).strip()
+
     return humanized_text
