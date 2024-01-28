@@ -12,7 +12,7 @@ def setup_logging():
         },
         'handlers': {
             'default': {
-                'level': 'INFO',
+                'level': 'DEBUG',
                 'formatter': 'standard',
                 'class': 'logging.StreamHandler',
             },
@@ -25,7 +25,7 @@ def setup_logging():
         'loggers': {
             '': {
                 'handlers': ['default'],
-                'level': 'INFO',
+                'level': 'DEBUG',
                 'propagate': True
             },
             'sqlalchemy.engine': {

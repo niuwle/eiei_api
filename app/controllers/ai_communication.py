@@ -16,6 +16,13 @@ async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Op
         messages = await db.execute(select(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id).order_by(tbl_msg.message_date))
         messages = messages.scalars().all()
         logger.info(f"Retrieved {len(messages)} messages for chat_id {chat_id} and bot_id {bot_id}")
+        # Calculate initial payload size
+        payload_size = len(str([{"role": "system", "content": ASSISTANT_PROMPT}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]))
+
+        # Remove oldest messages if payload size exceeds 16k characters
+        while payload_size > 16 * 1024:
+            oldest_message = messages.pop(0)
+            payload_size -= len(str({"role": oldest_message.role.lower(), "content": oldest_message.content_text}))
 
         payload = {
             "model": OPENROUTER_MODEL,

@@ -16,6 +16,8 @@ CREATE SCHEMA eiei_api;
 
 CREATE USER eiei_user_int WITH PASSWORD 'kLbuS6Pu9ECNHkFfN7ns';
 
+CREATE USER eiei_user_apex WITH PASSWORD 'kLbuS6Pu9ECNHkFfN7ns';
+
 GRANT USAGE ON SCHEMA eiei_api TO eiei_user_int;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA eiei_api TO eiei_user_int;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA eiei_api TO eiei_user_int;
@@ -40,7 +42,19 @@ GRANT SELECT ON tbl_200_messages TO admin_eiei_user2;
 
 GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO admin_eiei_user2;
 GRANT SELECT ON tbl_100_telegram_config TO admin_eiei_user2;
+--
+CREATE USER eiei_user_apex WITH PASSWORD 'kLbuS6Pu9ECNHkFfN7ns';
 
+GRANT USAGE ON SCHEMA public TO eiei_user_apex;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO eiei_user_apex;
+GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO eiei_user_apex;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO eiei_user_apex;
+GRANT INSERT, UPDATE, DELETE ON tbl_200_messages TO eiei_user_apex;
+GRANT SELECT ON tbl_200_messages TO eiei_user_apex;
+
+GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO eiei_user_apex;
+GRANT SELECT ON tbl_100_telegram_config TO eiei_user_apex;
 
 
 truncate   TABLE eiei_api.tbl_200_messages;
@@ -184,8 +198,32 @@ workspace: eiei_api
 admin
 wiA8%o*gDC37KRmo*HB&
 
+admin-home
+https://g64d3821c385420-krps7pyzpvlqmoxx.adb.eu-madrid-1.oraclecloudapps.com/ords/r/apex/workspace/home?session=103902384567198
+
+app-home
+https://g64d3821c385420-krps7pyzpvlqmoxx.adb.eu-madrid-1.oraclecloudapps.com/ords/r/eiei_api/bot-manager101/
+
+stuff:
 Connect postgres
 https://blogs.oracle.com/apex/post/connecting-your-apex-apps-to-non-oracle-databases-with-oracle-autonomous-database
+
+POSTGRES_USER
+postgres_user
+ZkBmbNPSFC9Xyuk5woeW
+
+BEGIN
+    DBMS_CLOUD_ADMIN.CREATE_DATABASE_LINK(
+        db_link_name => 'POSTGRES_2_DBLINK',
+        hostname => 'dpg-cml5g4a1hbls73c1rt50-a.oregon-postgres.render.com',
+        port => '5432',
+        service_name => 'eiei_ps_db',
+        credential_name => 'POSTGRES_2',
+        gateway_params => JSON_OBJECT('db_type' VALUE 'POSTGRES'),
+        ssl_server_cert_dn => NULL
+    );
+END;
+/
 
 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
 
@@ -214,9 +252,16 @@ curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"test"}}'
 
 
+--test text
 curl -X POST "https://eiei-api.onrender.com/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
      -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"test"}}'
+
+--test audio
+curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
+     -H "Content-Type: application/json" \
+     -d '{"update_id":103499669,"message":{"message_id":507,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706283344,"voice":{"duration":3,"mime_type":"audio/ogg","file_id":"AwACAgEAAxkBAAICAAFltirme4Ej_A_evrBnJ4LSQsUp-AACWwQAAm0IoEW-PMcrQylUxzQE","file_unique_id":"AgADWwQAAm0IoEU","file_size":7336}}}'
+
 
 
 Test json from bot

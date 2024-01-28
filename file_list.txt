@@ -1,4 +1,4 @@
-Date and Time: 26/01/2024 12.26.26
+Date and Time: 28/01/2024 18.13.39
 Directory Structure and Files in ./app:
 ./app/
 ├── __init__.py
@@ -18,9 +18,11 @@ Directory Structure and Files in ./app:
 ├── routers/
 │   ├── message_controller.py
 │   └── telegram_webhook.py
-└── schemas.py
+├── schemas.py
+└── utils/
+    └── transcribe_audio.py
 
-4 directories, 15 files
+5 directories, 16 files
 
 Details of Files:
 ___________
@@ -50,22 +52,30 @@ ___________
 Start of file: ./app/routers/telegram_webhook.py
 # app/routers/telegram-webhook.py
 import logging
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import add_message, get_bot_id_by_short_name
 from app.controllers.message_processing import process_queue
+from app.utils.transcribe_audio import transcribe_audio
 import os
 
 logger = logging.getLogger(__name__)
 
+class Voice(BaseModel):
+    duration: int
+    mime_type: str
+    file_id: str
+    file_size: int
+
 class Message(BaseModel):
     message_id: int
-    from_: dict = Field(None, alias='from')  # Using from_ to avoid conflict with Python keyword 'from'
+    from_: dict = Field(None, alias='from')
     chat: dict
     date: int
-    text: str
+    text: str = None  # Make text optional
+    voice: Voice = None  # Add voice field
 
 class TelegramWebhookPayload(BaseModel):
     update_id: int
@@ -75,15 +85,13 @@ router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
-async def telegram_webhook(request: Request, token: str, bot_short_name: str):
-    # Read and log the raw request body
+async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str):
     raw_body = await request.body()
     logger.info(f"Raw JSON payload: {raw_body.decode('utf-8')}")
 
-    # Parse the body as your Pydantic model
     try:
-        payload_dict = await request.json()  # Parse JSON body to dict
-        payload = TelegramWebhookPayload(**payload_dict)  # Convert dict to Pydantic model
+        payload_dict = await request.json()
+        payload = TelegramWebhookPayload(**payload_dict)
     except Exception as e:
         logger.error(f"Error parsing request body: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
@@ -91,30 +99,39 @@ async def telegram_webhook(request: Request, token: str, bot_short_name: str):
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")
 
-    # Accessing 'text' from the nested 'message' object
-    if not payload.message.text:
-        raise HTTPException(status_code=400, detail="No text found in message")
-
     message_data = payload.message
     chat_id = message_data.chat['id']
-    message_text = message_data.text
     message_id = message_data.message_id
-    
+
     async with get_db() as db:
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
-        internal_message = TextMessage(
-            chat_id=chat_id, user_id=0, bot_id=bot_id,
-            message_text=message_text, message_id=message_id,
-            channel="TELEGRAM", update_id=payload.update_id  # Use the update_id from the payload
-        )
+        if message_data.voice:
+            # Handle voice message
+            internal_message = TextMessage(
+                chat_id=chat_id, user_id=0, bot_id=bot_id,
+                message_text="[TRANSCRIBING AUDIO]", message_id=message_id,
+                channel="TELEGRAM", update_id=payload.update_id
+            )
+            added_message = await add_message(db, internal_message,'VOICE','N','USER')
+            # Start transcription process in the background
+            background_tasks.add_task(transcribe_audio,  background_tasks, added_message.pk_messages,bot_id,chat_id, message_data.voice.file_id, db)
+            #background_tasks.add_task(process_queue, added_message.chat_id, db)
+        elif message_data.text:
+            # Handle text message
+            internal_message = TextMessage(
+                chat_id=chat_id, user_id=0, bot_id=bot_id,
+                message_text=message_data.text, message_id=message_id,
+                channel="TELEGRAM", update_id=payload.update_id
+            )
+            added_message = await add_message(db, internal_message,'TEXT','N','USER')
+            background_tasks.add_task(process_queue, added_message.chat_id, db)
+        else:
+            # If neither text nor voice is found
+            raise HTTPException(status_code=400, detail="Unsupported message type")
 
-        try:
-            added_message = await add_message(db, internal_message)
-            await process_queue(added_message.chat_id, db)
-            return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        return {"pk_messages": added_message.pk_messages, "status": "Message processed successfully"}
+
 End of file: ./app/routers/telegram_webhook.py
 ___________
 Binary File: ./app/.DS_Store
@@ -131,7 +148,7 @@ TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL")
 OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 ASSISTANT_PROMPT = os.getenv("ASSISTANT_PROMPT")
-End of file: ./app/config.py
+MONSTER_API_TOKEN = os.getenv("MONSTER_API_TOKEN")End of file: ./app/config.py
 ___________
 ___________
 Start of file: ./app/logging_config.py
@@ -149,7 +166,7 @@ def setup_logging():
         },
         'handlers': {
             'default': {
-                'level': 'INFO',
+                'level': 'DEBUG',
                 'formatter': 'standard',
                 'class': 'logging.StreamHandler',
             },
@@ -162,7 +179,7 @@ def setup_logging():
         'loggers': {
             '': {
                 'handlers': ['default'],
-                'level': 'INFO',
+                'level': 'DEBUG',
                 'propagate': True
             },
             'sqlalchemy.engine': {
@@ -203,6 +220,123 @@ async def get_db():
         yield sessionEnd of file: ./app/database.py
 ___________
 Binary File: ./app/__init__.py
+___________
+Start of file: ./app/utils/transcribe_audio.py
+import asyncio
+import httpx
+import logging
+import os
+import mimetypes
+from app.database_operations import get_bot_token, mark_message_status, update_message_content
+from app.config import TELEGRAM_API_URL, MONSTER_API_TOKEN
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
+import subprocess
+import requests
+from tempfile import NamedTemporaryFile
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from app.controllers.message_processing import process_queue
+
+logger = logging.getLogger(__name__)
+async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+    try:
+        bot_token = await get_bot_token(bot_id=bot_id, db=db)
+        file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
+
+        async with httpx.AsyncClient() as client:
+            # Get the file from Telegram
+            file_response = await client.get(file_url)
+            file_response.raise_for_status()
+
+            file_path = file_response.json().get("result", {}).get("file_path", "")
+            full_file_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+
+            logger.info(f"full_file_url {full_file_url}")
+
+            # Convert audio file format
+            converted_file_path = await convert_audio(full_file_url)
+
+            # Prepare the file for upload
+            file_name = os.path.basename(converted_file_path)
+            files = {
+                "file": (file_name, open(converted_file_path, "rb"), mimetypes.guess_type(converted_file_path)[0])
+            }
+            payload = {
+                "diarize": "true",
+                "language": "en"
+            }
+            headers = {
+                "accept": "application/json",
+                "authorization": f"Bearer {MONSTER_API_TOKEN}"
+            }
+
+            # Send the transcription request with the file
+            transcription_response = await client.post(
+                'https://api.monsterapi.ai/v1/generate/whisper',
+                data=payload,
+                files=files,
+                headers=headers
+            )
+            logger.info(f"Monster transcription_response {transcription_response}")
+
+            transcription_response.raise_for_status()
+            transcribed_text = transcription_response.json().get('text', '')
+
+            logger.info(f"transcribed_text {transcribed_text}")
+
+        # Check if transcribed text is empty
+        if not transcribed_text:
+            error_message = "Transcription failed or returned empty result."
+            logger.error(error_message)
+
+            # Update the database with an error message
+            await update_message_content(db, message_pk, error_message)
+
+            # Mark the message status as 'E' for error
+            #await mark_message_status(db, message_pk, 'E')
+        else:
+            logger.info(f"transcribed_text {transcribed_text}")
+
+            # Update the database with the transcription result
+            await update_message_content(db, message_pk, transcribed_text)
+
+        # Clean up the temporary file
+        os.remove(converted_file_path)
+
+        # Continue with processing
+        background_tasks.add_task(process_queue, chat_id, db)
+
+    except Exception as e:
+        logger.error(f"Error in transcribe_audio: {e}")
+        await mark_message_status(db, message_pk, 'E')  # Update your function signature if needed
+        return None
+
+
+async def convert_audio(file_url: str) -> str:
+    try:
+        response = requests.get(file_url)
+        if response.status_code != 200:
+            logger.error('Failed to download the file')
+            return ''
+
+        with NamedTemporaryFile(suffix='.oga', delete=True) as input_file:  # Changed to delete=True for cleanup
+            input_file.write(response.content)
+            input_file.flush()  # Ensure all data is written
+
+            # Convert .oga to .ogg
+            output_filename = input_file.name + '.ogg'
+            subprocess.run(['ffmpeg', '-i', input_file.name, output_filename], check=True)
+
+            return output_filename
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f'Failed to convert the file: {e}')
+    except Exception as e:
+        logger.error(f'An error occurred during audio conversion: {e}')
+
+    return ''
+End of file: ./app/utils/transcribe_audio.py
+___________
 ___________
 Start of file: ./app/models/__init__.py
 from sqlalchemy.ext.declarative import declarative_base
@@ -283,7 +417,6 @@ End of file: ./app/schemas.py
 ___________
 ___________
 Start of file: ./app/database_operations.py
-# app/routers/database_operations.py
 from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from app.models.telegram_config import TelegramConfig
@@ -294,79 +427,77 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 import logging
 
+logger = logging.getLogger(__name__)
+
 async def get_bot_token(bot_id: int, db: AsyncSession) -> str:
     try:
-        result = await db.execute(select(TelegramConfig).filter(TelegramConfig.pk_bot == bot_id))
-        bot_config = result.scalar_one_or_none()
-        return bot_config.bot_token if bot_config else ''
+        query = select(TelegramConfig.bot_token).where(TelegramConfig.pk_bot == bot_id)
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
     except SQLAlchemyError as e:
-        logging.error(f"Database error in get_bot_token: {str(e)}")
+        logger.error(f"Database error in get_bot_token: {e}")
         return ''
 
 async def get_bot_id_by_short_name(bot_short_name: str, db: AsyncSession) -> int:
     try:
-        result = await db.execute(select(TelegramConfig.pk_bot).filter(TelegramConfig.bot_short_name == bot_short_name))
-        bot_id = result.scalar_one_or_none()
-        if bot_id is not None:
-            return bot_id
-        else:
-            logger.warning(f"No bot found with short name {bot_short_name}")
-            raise
+        query = select(TelegramConfig.pk_bot).where(TelegramConfig.bot_short_name == bot_short_name)
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
     except SQLAlchemyError as e:
-        logger.error(f"Database error in get_bot_id_by_short_name: {str(e)}")
-        raise
+        logger.error(f"Database error in get_bot_id_by_short_name: {e}")
+        return None
 
-async def insert_response_message(db: AsyncSession, channel: str, bot_id: int, chat_id: int, content_text: str, type: str, role: str, is_processed: str):
+
+async def add_message(db: AsyncSession, message_data: TextMessage, type: str, is_processed: str, role: str) -> tbl_msg:
     new_message = tbl_msg(
-        channel=channel,
-        bot_id=bot_id,
-        chat_id=chat_id,
-        type=type,
-        role=role,
-        content_text=content_text,
-        message_date=datetime.now(),
-        is_processed=is_processed
-    )
-    db.add(new_message)
-    await db.commit()
-
-async def add_message(db: AsyncSession, message_data: TextMessage) -> tbl_msg:
-    db_message = tbl_msg(
         chat_id=message_data.chat_id,
         user_id=message_data.user_id,
         bot_id=message_data.bot_id,
-        content_text=message_data.message_text,  
+        content_text=message_data.message_text,
         message_id=message_data.message_id,
         channel=message_data.channel,
         update_id=message_data.update_id,
         message_date=datetime.now(),
-        type='TEXT',
-        is_processed='N',
-        role='USER'
+        type=type,
+        is_processed=is_processed,
+        role=role
     )
-    db.add(db_message)
+    db.add(new_message)
     await db.commit()
-    await db.refresh(db_message)
-    return db_message
+    await db.refresh(new_message)
+    logger.debug(f"Message added  {new_message}")
+    return new_message
+
+async def update_message_content(db: AsyncSession, message_pk: int, new_content: str):
+    try:
+        query = select(tbl_msg).where(tbl_msg.pk_messages == message_pk)
+        result = await db.execute(query)
+        message = result.scalar_one_or_none()
+        if message:
+            message.content_text = new_content
+            await db.commit()
+            logger.info(f"Updated content_text for message with pk {message_pk}")
+        else:
+            logger.warning(f"No message found with pk {message_pk}")
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in update_message_content: {e}")
+        raise
 
 async def mark_message_status(db: AsyncSession, message_pk: int, new_status: str):
     try:
-        # Retrieve the message by its primary key
-        result = await db.execute(select(tbl_msg).filter(tbl_msg.pk_messages == message_pk))
+        query = select(tbl_msg).where(tbl_msg.pk_messages == message_pk)
+        result = await db.execute(query)
         message = result.scalar_one_or_none()
-
-        # Check if the message exists
         if message:
-            # Update the is_processed status of the message
             message.is_processed = new_status
             await db.commit()
-            logging.info(f"Message with pk {message_pk} marked as {new_status}")
+            logger.info(f"Message with pk {message_pk} marked as {new_status}")
         else:
-            logging.warning(f"No message found with pk {message_pk}")
-
+            logger.warning(f"No message found with pk {message_pk}")
     except SQLAlchemyError as e:
-        logging.error(f"Database error in mark_message_status: {str(e)}")
-        raiseEnd of file: ./app/database_operations.py
+        logger.error(f"Database error in mark_message_status: {e}")
+        raise
+End of file: ./app/database_operations.py
 ___________
 ___________
 Start of file: ./app/controllers/__init__.py
@@ -380,14 +511,17 @@ End of file: ./app/controllers/__init__.py
 ___________
 ___________
 Start of file: ./app/controllers/message_processing.py
+# ./app/controllers/message_processing.py
 import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import get_bot_token, insert_response_message, mark_message_status
+from app.database_operations import get_bot_token, add_message, mark_message_status
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import send_telegram_message
 from app.models.message import tbl_msg
+from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
+from app.schemas import TextMessage
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -403,18 +537,20 @@ async def process_queue(chat_id: int, db: AsyncSession):
             result = await db.execute(stmt)
             unprocessed_messages = result.scalars().all()
 
-        if unprocessed_messages:
+        logger.info(f"Unprocessed messages: {unprocessed_messages}") 
 
+        logger.debug(f"Unprocessed messages: {unprocessed_messages}") # Debug statement
+
+        if unprocessed_messages:
             logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
 
             if unprocessed_messages[0].message_date <= timestamp:
-                # Process messages as no new messages arrived in the last 3 seconds
-                for message in unprocessed_messages:
-                    await process_message(message, db, chat_id)
+                await process_message(unprocessed_messages, db, chat_id)
             else:
                 # Skip processing as a new message arrived during the wait
                 logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
-
+            
+            
     except Exception as e:
         logger.error(f'Error processing queue: {e}')
         await db.rollback()
@@ -422,18 +558,47 @@ async def process_queue(chat_id: int, db: AsyncSession):
         await db.close()
 
 
-async def process_message(message, db, chat_id):
-    await mark_message_status(db, message.pk_messages, 'P')
-    response_text = await get_chat_completion(chat_id, message.bot_id, db)
+async def process_message(messages, db, chat_id):
+    logger.debug(f"Messages to process: {messages}") # Debug statement
+
+    # Mark all messages as processed once
+    for message in messages:
+        await mark_message_status(db, message.pk_messages, 'P')
+
+    # Get chat completion only once
+    try:
+        response_text = await asyncio.wait_for(get_chat_completion(chat_id, messages[0].bot_id, db), timeout=10)
+    except asyncio.TimeoutError:
+        logger.error(f"get_chat_completion timed out for chat_id {chat_id}")
+        response_text = None
+        
+    logger.debug(f"Chat completion response: {response_text}") # Debug statement
 
     if response_text:
-        bot_token = await get_bot_token(message.bot_id, db)
+        bot_token = await get_bot_token(messages[0].bot_id, db)
+        # Send the response text to Telegram once
         await send_telegram_message(chat_id, response_text, bot_token)
-        await insert_response_message(db, 'TELEGRAM', message.bot_id, chat_id, response_text, 'TEXT', 'ASSISTANT', 'Y')
+        
+        # Construct the message data for the response message
+        response_message_data = TextMessage(
+            chat_id=chat_id,
+            user_id=0, # Assuming the bot is sending the message, user_id might be set to 0 or the bot's user ID
+            bot_id=messages[0].bot_id,
+            message_text=response_text,
+            message_id=0, # If you have a way to generate or track message IDs for outgoing messages, use it here
+            channel=messages[0].channel,
+            update_id=0 # Set to 0 or an appropriate value if you're tracking update IDs
+        )
 
-    await mark_message_status(db, message.pk_messages, 'Y')
-    logger.info(f"Message {message.pk_messages} processed for chat_id {chat_id}")
+        # Use the updated add_message function to save the response
+        await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
 
+    # Mark all messages as processed again
+    for message in messages:
+        await mark_message_status(db, message.pk_messages, 'Y')
+
+    # Log the count of records processed
+    logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
 End of file: ./app/controllers/message_processing.py
 ___________
 ___________
@@ -481,6 +646,13 @@ async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Op
         messages = await db.execute(select(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id).order_by(tbl_msg.message_date))
         messages = messages.scalars().all()
         logger.info(f"Retrieved {len(messages)} messages for chat_id {chat_id} and bot_id {bot_id}")
+        # Calculate initial payload size
+        payload_size = len(str([{"role": "system", "content": ASSISTANT_PROMPT}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]))
+
+        # Remove oldest messages if payload size exceeds 16k characters
+        while payload_size > 16 * 1024:
+            oldest_message = messages.pop(0)
+            payload_size -= len(str({"role": oldest_message.role.lower(), "content": oldest_message.content_text}))
 
         payload = {
             "model": OPENROUTER_MODEL,
