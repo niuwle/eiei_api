@@ -58,7 +58,7 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
             transcription_response.raise_for_status()
             transcribed_text = transcription_response.json().get('text', '')
 
-            logger.info(f"transcribed_text {transcribed_text}")
+            logger.info(f"transcription_response {transcription_response}")
 
         # Check if transcribed text is empty
         if not transcribed_text:

@@ -62,9 +62,14 @@ async def process_message(messages, db, chat_id):
     logger.debug(f"Chat completion response: {response_text}") # Debug statement
 
     if response_text:
+        # Apply humanization to the response text
+        humanized_response = humanize_response(response_text)
         bot_token = await get_bot_token(messages[0].bot_id, db)
-        # Send the response text to Telegram once
-        await send_telegram_message(chat_id, response_text, bot_token)
+
+        # Loop through each sentence and send it as a separate message
+        for sentence in humanized_response.split('\n'):
+            if sentence.strip():  # Ensure the sentence is not just whitespace
+                await send_telegram_message(chat_id, sentence, bot_token)
         
         # Construct the message data for the response message
         response_message_data = TextMessage(
@@ -86,3 +91,17 @@ async def process_message(messages, db, chat_id):
 
     # Log the count of records processed
     logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
+
+
+def humanize_response(response_text: str) -> str:
+    """
+    This function takes the AI's response text and transforms it into a more
+    human-like, casual chat style.
+    """
+    # Splitting the text into sentences
+    sentences = response_text.split('. ')
+    # Removing initial exclamation and question marks
+    sentences = [s.lstrip('!?') for s in sentences]
+    # Joining the sentences with a new line to simulate separate message sending
+    humanized_text = '\n'.join(sentences)
+    return humanized_text
