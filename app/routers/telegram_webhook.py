@@ -7,6 +7,7 @@ from app.database import get_db
 from app.database_operations import add_message, get_bot_id_by_short_name
 from app.controllers.message_processing import process_queue
 from app.utils.transcribe_audio import transcribe_audio
+from app.utils.error_handler import handle_exception 
 import os
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         payload = TelegramWebhookPayload(**payload_dict)
     except Exception as e:
         logger.error(f"Error parsing request body: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
+        handle_exception(e)
 
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")

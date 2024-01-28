@@ -68,14 +68,14 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
             # Update the database with an error message
             await update_message_content(db, message_pk, error_message)
 
-            # Mark the message status as 'E' for error
-            #await mark_message_status(db, message_pk, 'E')
         else:
             logger.info(f"transcribed_text {transcribed_text}")
 
             # Update the database with the transcription result
             await update_message_content(db, message_pk, transcribed_text)
 
+        # Mark the message status as 'N' for start processing
+        await mark_message_status(db, message_pk, 'N')
         # Clean up the temporary file
         os.remove(converted_file_path)
 

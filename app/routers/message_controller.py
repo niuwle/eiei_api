@@ -5,7 +5,7 @@ from app.database import get_db
 from app.database_operations import add_message
 from app.controllers.message_processing import process_queue
 import asyncio
-
+from app.utils.error_handler import handle_exception 
 router = APIRouter()
 
 @router.post("/receive-message")
@@ -16,4 +16,4 @@ async def receive_message(message: TextMessage):
             await process_queue(added_message.chat_id, db)
             return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+            handle_exception(e)
