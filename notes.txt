@@ -57,7 +57,7 @@ GRANT INSERT, UPDATE, DELETE ON tbl_100_telegram_config TO eiei_user_apex;
 GRANT SELECT ON tbl_100_telegram_config TO eiei_user_apex;
 
 
-truncate   TABLE eiei_api.tbl_200_messages;
+truncate   TABLE tbl_200_messages;
 drop    TABLE tbl_200_messages;
 
 
@@ -249,7 +249,7 @@ https://api.telegram.org/bot6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw/setWe
 
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
-     -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"test"}}'
+     -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"a ver contame como chupas pijey"}}'
 
 
 --test text
@@ -260,7 +260,7 @@ curl -X POST "https://eiei-api.onrender.com/telegram-webhook/test/SampleBot" \
 --test audio
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
-     -d '{"update_id":103499669,"message":{"message_id":507,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706283344,"voice":{"duration":3,"mime_type":"audio/ogg","file_id":"AwACAgEAAxkBAAICAAFltirme4Ej_A_evrBnJ4LSQsUp-AACWwQAAm0IoEW-PMcrQylUxzQE","file_unique_id":"AgADWwQAAm0IoEU","file_size":7336}}}'
+     -d '{"update_id":103499669,"message":{"message_id":507,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706283344,"voice":{"duration":3,"mime_type":"audio/ogg","file_id":"AwACAgEAAxkBAAICSWW3oSeC1kqIVxRSlDqSjm48vlYOAAJKAwACm0zBRYuqnmHGYDIPNAQ","file_unique_id":"AgADWwQAAm0IoEU","file_size":7336}}}'
 
 
 

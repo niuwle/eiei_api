@@ -11,6 +11,7 @@ from sqlalchemy.future import select
 from app.schemas import TextMessage
 import asyncio
 import re
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -93,21 +94,31 @@ async def process_message(messages, db, chat_id):
     # Log the count of records processed
     logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
 
-
-
 def humanize_response(text: str) -> str:
     # Split the text into sentences only at '.', '?', or '!', and keep '?' and '!' with the sentence
-    sentences = re.split(r'(?<=[?!\.])\s+(?=[A-Z])', text)
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Za-z\u00C0-\u00FF"\'\(\[:])', text)
 
-    # Process each sentence to ensure proper formatting
-    formatted_sentences = []
+    # Initialize a deque to store the sentences
+    dq = deque(maxlen=10)
+
+    # Initialize a list to store the merged texts
+    merged_texts = []
+
     for s in sentences:
         if s:
             # Remove the full stop as we don't need to keep it
             s = s.rstrip('.')
-            formatted_sentences.append(s.strip())
+            # Correctly strip leading whitespaces and unwanted characters
+            s = s.strip(" \u200e\u200f\u202a\u202c")
+            # Add the sentence to the deque
+            dq.append(s)
+            # If the deque is full, join the sentences and append to the merged texts
+            if len(dq) == dq.maxlen:
+                merged_texts.append(' '.join(dq))
+                dq.clear()
 
-    # Join the formatted sentences with a new line to simulate separate message sending
-    humanized_text = '\n'.join(formatted_sentences)
+    # Join the remaining sentences in the deque with a new line to simulate separate message sending
+    if dq:
+        merged_texts.append('\n'.join(dq))
 
-    return humanized_text
+    return '\n'.join(merged_texts)

@@ -19,8 +19,8 @@ async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Op
         # Calculate initial payload size
         payload_size = len(str([{"role": "system", "content": ASSISTANT_PROMPT}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]))
 
-        # Remove oldest messages if payload size exceeds 16k characters
-        while payload_size > 16 * 1024:
+        # Remove oldest messages if payload size exceeds 8k  characters
+        while payload_size > 8 * 1024:
             oldest_message = messages.pop(0)
             payload_size -= len(str({"role": oldest_message.role.lower(), "content": oldest_message.content_text}))
 
