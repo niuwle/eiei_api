@@ -249,7 +249,7 @@ https://api.telegram.org/bot6922050326:AAEGdw2gG5zm6EWwSobBl0KvIykl_l9uMHw/setWe
 
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
-     -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"a ver contame como chupas pijey"}}'
+     -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"Hola soy Milovos como te llamas"}}'
 
 
 --test text

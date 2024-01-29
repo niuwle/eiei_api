@@ -10,8 +10,10 @@ from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
 from app.schemas import TextMessage
 import asyncio
-import re
+import regex as re
+
 from collections import deque
+from math import ceil
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +70,10 @@ async def process_message(messages, db, chat_id):
         humanized_response = humanize_response(response_text)
         bot_token = await get_bot_token(messages[0].bot_id, db)
 
-        # Loop through each sentence and send it as a separate message
-        for sentence in humanized_response.split('\n'):
-            if sentence.strip():  # Ensure the sentence is not just whitespace
-                await send_telegram_message(chat_id, sentence, bot_token)
+        # Loop through each chunk and send it as a separate message
+        for chunk in humanized_response:
+            await send_telegram_message(chat_id, chunk, bot_token)
+
         
         # Construct the message data for the response message
         response_message_data = TextMessage(
@@ -92,33 +94,44 @@ async def process_message(messages, db, chat_id):
         await mark_message_status(db, message.pk_messages, 'Y')
 
     # Log the count of records processed
-    logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
+    logger.info(f"{len(messages)} messages processed for chat_id {chat_id}") 
+    
 
-def humanize_response(text: str) -> str:
-    # Split the text into sentences only at '.', '?', or '!', and keep '?' and '!' with the sentence
-    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Za-z\u00C0-\u00FF"\'\(\[:])', text)
+def humanize_response(paragraph):
+    
+    paragraph = paragraph.replace('¡', '').replace('¿', '')
+    # Define a pattern to match a period, question mark, or exclamation mark
+    pattern = r'(?<=[.!?]) +'
 
-    # Initialize a deque to store the sentences
-    dq = deque(maxlen=10)
+    # Use regex to split the paragraph into records based on the defined pattern
+    records = re.split(pattern, paragraph)
 
-    # Initialize a list to store the merged texts
-    merged_texts = []
+    # Filter out empty strings
+    records = [rec for rec in records if rec.strip()]
 
-    for s in sentences:
-        if s:
-            # Remove the full stop as we don't need to keep it
-            s = s.rstrip('.')
-            # Correctly strip leading whitespaces and unwanted characters
-            s = s.strip(" \u200e\u200f\u202a\u202c")
-            # Add the sentence to the deque
-            dq.append(s)
-            # If the deque is full, join the sentences and append to the merged texts
-            if len(dq) == dq.maxlen:
-                merged_texts.append(' '.join(dq))
-                dq.clear()
+    return records
 
-    # Join the remaining sentences in the deque with a new line to simulate separate message sending
-    if dq:
-        merged_texts.append('\n'.join(dq))
+def humanize_response2(paragraph):
+    # Remove '¡' and '¿' characters
+    paragraph = paragraph.replace('¡', '').replace('¿', '')
 
-    return '\n'.join(merged_texts)
+    # Define a pattern to match a period, question mark, or exclamation mark, 
+    # followed by a space and a capital letter
+    pattern = r'([.!?])\s+(?=[A-Z])'
+
+    # Use regex to split the paragraph into records based on the defined pattern
+    records = re.split(pattern, paragraph, flags=re.UNICODE)
+
+    # Filter out empty strings and ensure records are properly combined with trailing punctuation
+    records = [rec + next_rec if next_rec in '.!?' else rec
+               for rec, next_rec in zip(records, records[1:] + ['']) if rec.strip()]
+
+    # Handle standalone emojis as separate records
+    records = [item for rec in records for item in re.split('(\\p{Emoji})', rec, flags=re.UNICODE) if item.strip()]
+
+    # Merge records if there are more than 10
+    while len(records) > 10:
+        records[-2] += ' ' + records[-1]
+        records.pop()
+
+    return records
