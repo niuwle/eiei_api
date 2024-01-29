@@ -20,7 +20,6 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
 
         async with httpx.AsyncClient() as client:
-            # Get the file from Telegram
             file_response = await client.get(file_url)
             file_response.raise_for_status()
 
@@ -30,7 +29,7 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
             logger.info(f"full_file_url {full_file_url}")
 
             # Convert audio file format
-            converted_file_path = await convert_audio(full_file_url)
+            converted_file_path = await convert_audio(full_file_url)  # Ensure this uses the same API as PL/SQL function
 
             # Prepare the file for upload
             file_name = os.path.basename(converted_file_path)
@@ -38,55 +37,71 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
                 "file": (file_name, open(converted_file_path, "rb"), mimetypes.guess_type(converted_file_path)[0])
             }
             payload = {
-                "diarize": "true",
-                "language": "en"
+                "diarize": "false",
+                "do_sample": "true"
+                #,"language": "en"
             }
             headers = {
                 "accept": "application/json",
                 "authorization": f"Bearer {MONSTER_API_TOKEN}"
             }
 
-            # Send the transcription request with the file
+            # Send the transcription request
             transcription_response = await client.post(
-                'https://api.monsterapi.ai/v1/generate/whisper',
+                'https://api.monsterapi.ai/v1/generate/speech2text-v2',
                 data=payload,
                 files=files,
                 headers=headers
             )
-            logger.info(f"Monster transcription_response {transcription_response}")
+            response_json = transcription_response.json()
+            logger.debug(f"Monster transcription_response JSON: {response_json}")
+
 
             transcription_response.raise_for_status()
-            transcribed_text = transcription_response.json().get('text', '')
+            process_id = transcription_response.json().get('process_id', '')
 
-            logger.info(f"transcription_response {transcription_response}")
+            logger.info(f"Monster process_id {process_id}")
 
-        # Check if transcribed text is empty
-        if not transcribed_text:
-            error_message = "[Audio]:...////"
-            logger.error(error_message)
+            # Check the status of the transcription in a loop
+            max_attempts = 5
+            attempt_count = 0
+            transcribed_text = ''
+            while attempt_count < max_attempts:
+                await asyncio.sleep(3)  # Non-blocking sleep
+                status_response = await client.get(f'https://api.monsterapi.ai/v1/status/{process_id}',
+                headers=headers)
+                status = status_response.json().get('status', '')
 
-            # Update the database with an error message
-            await update_message_content(db, message_pk, error_message)
+                if status == 'COMPLETED':
+                    
+                    response_json = status_response.json()
+                    logger.debug(f"Monster response_json JSON: {response_json}")
+                    transcribed_text = response_json.get('result', {}).get('text', '')
+                    break
 
-        else:
-            logger.info(f"transcribed_text {transcribed_text}")
+                attempt_count += 1
+                await asyncio.sleep(3)  # Non-blocking sleep
 
-            # Update the database with the transcription result
-            await update_message_content(db, message_pk, transcribed_text)
+            response_json = status_response.json()
+            logger.info(f"Monster status transcription_response JSON: {response_json}")
 
-        # Mark the message status as 'N' for start processing
-        await mark_message_status(db, message_pk, 'N')
-        # Clean up the temporary file
-        os.remove(converted_file_path)
+            # Handle the response
+            if not transcribed_text:
+                error_message = "[Audio]: Transcription failed or incomplete"
+                logger.error(error_message)
+                await update_message_content(db, message_pk, error_message)
+            else:
+                logger.info(f"transcribed_text {transcribed_text}")
+                await update_message_content(db, message_pk, transcribed_text)
 
-        # Continue with processing
-        background_tasks.add_task(process_queue, chat_id, db)
+            await mark_message_status(db, message_pk, 'N')
+            os.remove(converted_file_path)
+            background_tasks.add_task(process_queue, chat_id, db)
 
     except Exception as e:
         logger.error(f"Error in transcribe_audio: {e}")
-        await mark_message_status(db, message_pk, 'E')  # Update your function signature if needed
+        await mark_message_status(db, message_pk, 'E')
         return None
-
 
 async def convert_audio(file_url: str) -> str:
     try:
