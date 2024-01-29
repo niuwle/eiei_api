@@ -98,7 +98,7 @@ async def process_message(messages, db, chat_id):
     
 
 def humanize_response(paragraph):
-    
+
     paragraph = paragraph.replace('¡', '').replace('¿', '')
     # Define a pattern to match a period, question mark, or exclamation mark
     pattern = r'(?<=[.!?]) +'
@@ -111,27 +111,3 @@ def humanize_response(paragraph):
 
     return records
 
-def humanize_response2(paragraph):
-    # Remove '¡' and '¿' characters
-    paragraph = paragraph.replace('¡', '').replace('¿', '')
-
-    # Define a pattern to match a period, question mark, or exclamation mark, 
-    # followed by a space and a capital letter
-    pattern = r'([.!?])\s+(?=[A-Z])'
-
-    # Use regex to split the paragraph into records based on the defined pattern
-    records = re.split(pattern, paragraph, flags=re.UNICODE)
-
-    # Filter out empty strings and ensure records are properly combined with trailing punctuation
-    records = [rec + next_rec if next_rec in '.!?' else rec
-               for rec, next_rec in zip(records, records[1:] + ['']) if rec.strip()]
-
-    # Handle standalone emojis as separate records
-    records = [item for rec in records for item in re.split('(\\p{Emoji})', rec, flags=re.UNICODE) if item.strip()]
-
-    # Merge records if there are more than 10
-    while len(records) > 10:
-        records[-2] += ' ' + records[-1]
-        records.pop()
-
-    return records

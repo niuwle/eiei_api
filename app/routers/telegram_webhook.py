@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_message, get_bot_id_by_short_name
+from app.database_operations import add_message, get_bot_id_by_short_name, get_bot_token
+from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
 from app.utils.transcribe_audio import transcribe_audio
 from app.utils.error_handler import handle_exception 
@@ -55,7 +56,29 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
     async with get_db() as db:
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
-        if message_data.voice:
+        # Check if the message is a '/start' bot command
+        if message_data.text == "/start": # and message_data.entities:
+            #for entity in message_data.entities:
+                #if entity.type == "bot_command" and message_data.text[entity.offset:entity.offset+entity.length] == "/start":
+
+                    bot_token = await get_bot_token(bot_id, db)
+                    predefined_response_text = "Hi I'm Tabatha! What about you?"  # Customize this message
+                    await send_telegram_message(chat_id, predefined_response_text, bot_token)
+
+                    # Create a TextMessage instance with the predefined response
+                    response_message = TextMessage(
+                        chat_id=chat_id, user_id=0, bot_id=bot_id,
+                        message_text=predefined_response_text, message_id=message_id,
+                        channel="TELEGRAM", update_id=payload.update_id
+                    )
+
+                    # Add the predefined response to the database
+                    added_message = await add_message(db, response_message, 'TEXT', 'Y', 'ASSISTANT')
+                    
+                    return {"status": "Predefined start message sent"}
+
+
+        elif message_data.voice:
             # Handle voice message
             internal_message = TextMessage(
                 chat_id=chat_id, user_id=0, bot_id=bot_id,
