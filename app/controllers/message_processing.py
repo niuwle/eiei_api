@@ -94,21 +94,20 @@ async def process_message(messages, db, chat_id):
     logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
 
 
-def humanize_response(text: str) -> str:
-    # Using regular expression to split the text into sentences at '.', '?', and '!'
-    # Lookahead assertion is used to keep the punctuation marks
-    sentences = re.split(r'(?<=[.?!])\s+', text)
 
-    # Removing initial Spanish question marks (¿), exclamation marks (¡) and processing each sentence
+def humanize_response(text: str) -> str:
+    # Split the text into sentences only at '.', '?', or '!', and keep '?' and '!' with the sentence
+    sentences = re.split(r'(?<=[?!\.])\s+(?=[A-Z])', text)
+
+    # Process each sentence to ensure proper formatting
     formatted_sentences = []
     for s in sentences:
         if s:
-            s = s.lstrip('¿¡')  # Remove leading special characters
-            s = re.sub(r'(\d+\.)', r'\n\1', s)  # Add newline before numbers followed by a period
-            s = re.sub(r'(?<=[^\d\n])([A-Z][^.!?]*[.!?])', r'\n\1', s)  # Add newline before certain sentences
-            formatted_sentences.append(s)
+            # Remove the full stop as we don't need to keep it
+            s = s.rstrip('.')
+            formatted_sentences.append(s.strip())
 
-    # Joining the formatted sentences with a new line to simulate separate message sending
-    humanized_text = '\n'.join(formatted_sentences).strip()
+    # Join the formatted sentences with a new line to simulate separate message sending
+    humanized_text = '\n'.join(formatted_sentences)
 
     return humanized_text
