@@ -1,5 +1,6 @@
 # app/routers/telegram-webhook.py
 import logging
+from typing import List
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from app.schemas import TextMessage
@@ -7,9 +8,11 @@ from app.database import get_db
 from app.database_operations import add_message, get_bot_id_by_short_name, get_bot_token
 from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
-from app.utils.transcribe_audio import transcribe_audio
+from app.utils.process_audio import transcribe_audio
+from app.utils.process_photo import caption_photo
 from app.utils.error_handler import handle_exception 
 import os
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +22,22 @@ class Voice(BaseModel):
     file_id: str
     file_size: int
 
+class PhotoSize(BaseModel):
+    file_id: str
+    file_unique_id: str
+    file_size: int
+    width: int
+    height: int
+
 class Message(BaseModel):
     message_id: int
     from_: dict = Field(None, alias='from')
     chat: dict
     date: int
-    text: str = None  # Make text optional
-    voice: Voice = None  # Add voice field
+    text: str = None   
+    voice: Voice = None   
+    photo: List[PhotoSize] = None  
+
 
 class TelegramWebhookPayload(BaseModel):
     update_id: int
@@ -76,6 +88,17 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                     added_message = await add_message(db, response_message, 'TEXT', 'Y', 'ASSISTANT')
                     
                     return {"status": "Predefined start message sent"}
+
+        elif message_data.photo:
+            # Handle photo message
+            largest_photo = message_data.photo[-1]  # Assuming the last photo is the largest
+            internal_message = TextMessage(
+                chat_id=chat_id, user_id=0, bot_id=bot_id,
+                message_text="[PROCESSING PHOTO]", message_id=message_id,
+                channel="TELEGRAM", update_id=payload.update_id
+            )
+            added_message = await add_message(db, internal_message, 'PHOTO', 'N', 'USER')
+            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, bot_id, chat_id, largest_photo.file_id, db)
 
 
         elif message_data.voice:
