@@ -29,6 +29,14 @@ class PhotoSize(BaseModel):
     width: int
     height: int
 
+class Document(BaseModel):
+    file_id: str
+    file_unique_id: str
+    file_size: int
+    file_name: str
+    mime_type: str
+    thumb: PhotoSize = None
+
 class Message(BaseModel):
     message_id: int
     from_: dict = Field(None, alias='from')
@@ -36,7 +44,9 @@ class Message(BaseModel):
     date: int
     text: str = None   
     voice: Voice = None   
-    photo: List[PhotoSize] = None  
+    photo: List[PhotoSize] = None
+    document: Document = None
+
 
 
 class TelegramWebhookPayload(BaseModel):
@@ -48,6 +58,9 @@ SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
 async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str):
+    if token != SECRET_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
     raw_body = await request.body()
     logger.info(f"Raw JSON payload: {raw_body.decode('utf-8')}")
 
@@ -56,10 +69,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         payload = TelegramWebhookPayload(**payload_dict)
     except Exception as e:
         logger.error(f"Error parsing request body: {e}")
-        handle_exception(e)
+        await handle_exception(e, chat_id, bot_short_name, status_code=500, detail=(f"Error parsing request body: {e}"))
 
-    if token != SECRET_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid token")
 
     message_data = payload.message
     chat_id = message_data.chat['id']
@@ -101,6 +112,18 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, bot_id, chat_id, largest_photo.file_id, db)
 
 
+        # New check for document message
+        elif message_data.document and message_data.document.mime_type.startswith("image/"):
+            # Assuming document is an image, process similarly to a photo
+            document = message_data.document
+            internal_message = TextMessage(
+                chat_id=chat_id, user_id=0, bot_id=bot_id,
+                message_text="[PROCESSING DOCUMENT AS PHOTO]", message_id=message_id,
+                channel="TELEGRAM", update_id=payload.update_id
+            )
+            added_message = await add_message(db, internal_message, 'DOCUMENT', 'N', 'USER')
+            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, bot_id, chat_id, document.file_id, db)
+
         elif message_data.voice:
             # Handle voice message
             internal_message = TextMessage(
@@ -123,7 +146,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             background_tasks.add_task(process_queue, added_message.chat_id, db)
         else:
             # If neither text nor voice is found
-            raise HTTPException(status_code=400, detail="Unsupported message type")
+            await handle_exception(e, chat_id, bot_short_name, status_code=400, detail="Unsupported message type") 
 
         return {"pk_messages": added_message.pk_messages, "status": "Message processed successfully"}
 
