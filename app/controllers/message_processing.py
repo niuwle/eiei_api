@@ -17,7 +17,7 @@ from math import ceil
 
 logger = logging.getLogger(__name__)
 
-async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession):
+async def process_queue(chat_id: int, message_pk: int, ai_placeholder_pk: int,  db: AsyncSession):
     try:
         timestamp = datetime.now()
         await asyncio.sleep(3)
@@ -36,7 +36,7 @@ async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession
             logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
 
             if unprocessed_messages[0].message_date <= timestamp:
-                await process_message(unprocessed_messages, db, chat_id, ai_placeholder_rec)
+                await process_message(unprocessed_messages, db, chat_id, ai_placeholder_pk)
             else:
                 # Skip processing as a new message arrived during the wait
                 logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
@@ -49,7 +49,7 @@ async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession
         await db.close()
 
 
-async def process_message(messages, db, chat_id, ai_placeholder_rec: int,):
+async def process_message(messages, db, chat_id, ai_placeholder_pk: int,):
     logger.debug(f"Messages to process: {messages}") # Debug statement
 
     # Mark all messages as processed once
@@ -74,26 +74,20 @@ async def process_message(messages, db, chat_id, ai_placeholder_rec: int,):
         for chunk in humanized_response:
             await send_telegram_message(chat_id, chunk, bot_token)
 
-        
-        # Construct the message data for the response message
-        response_message_data = TextMessage(
-            chat_id=chat_id,
-            user_id=0, # Assuming the bot is sending the message, user_id might be set to 0 or the bot's user ID
-            bot_id=messages[0].bot_id,
-            message_text=response_text,
-            message_id=0, # If you have a way to generate or track message IDs for outgoing messages, use it here
-            channel=messages[0].channel,
-            update_id=0 # Set to 0 or an appropriate value if you're tracking update IDs
-        )
-
         # Use the updated add_message function to save the response
         # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
-        await update_message_content(db, ai_placeholder_rec, response_text)
-        await mark_message_status(db, ai_placeholder_rec, 'Y')
+        await update_message_content(db, ai_placeholder_pk, response_text)
+        await mark_message_status(db, ai_placeholder_pk, 'Y')
 
-    # Mark all messages as processed again
-    for message in messages:
-        await mark_message_status(db, message.pk_messages, 'Y')
+        # Mark all messages as processed again
+        for message in messages:
+            await mark_message_status(db, message.pk_messages, 'Y')
+    
+    else:
+
+        # Response was not getted so we mark for reprocesing later
+        for message in messages:
+            await mark_message_status(db, message.pk_messages, 'N')
 
     # Log the count of records processed
     logger.info(f"{len(messages)} messages processed for chat_id {chat_id}") 

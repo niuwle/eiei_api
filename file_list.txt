@@ -1,4 +1,4 @@
-Date and Time: 02/02/2024 12.13.05
+Date and Time: 02/02/2024 19.45.33
 Directory Structure and Files in ./app:
 ./app/
 ├── __init__.py
@@ -33,7 +33,7 @@ Start of file: ./app/routers/message_controller.py
 from fastapi import APIRouter, HTTPException
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_message
+from app.database_operations import add_messages
 from app.controllers.message_processing import process_queue
 import asyncio
 from app.utils.error_handler import handle_exception 
@@ -43,7 +43,7 @@ router = APIRouter()
 async def receive_message(message: TextMessage):
     async with get_db() as db:
         try:
-            added_message = await add_message(db, message)
+            added_message = await add_messages(db, message)
             await process_queue(added_message.chat_id, db)
             return {"pk_messages": added_message.pk_messages, "status": "Message saved successfully"}
         except Exception as e:
@@ -51,21 +51,20 @@ async def receive_message(message: TextMessage):
 ___________
 ___________
 Start of file: ./app/routers/telegram_webhook.py
-# app/routers/telegram-webhook.py
 import logging
-from typing import List
-from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+import os
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
+from typing import List
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_message, get_bot_id_by_short_name, get_bot_token
+from app.database_operations import add_messages, get_bot_id_by_short_name, get_bot_token
 from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
 from app.utils.process_photo import caption_photo
-from app.utils.error_handler import handle_exception 
-import os
-
+from app.utils.error_handler import handle_exception
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +94,10 @@ class Message(BaseModel):
     from_: dict = Field(None, alias='from')
     chat: dict
     date: int
-    text: str = None   
-    voice: Voice = None   
+    text: str = None
+    voice: Voice = None
     photo: List[PhotoSize] = None
     document: Document = None
-
-
 
 class TelegramWebhookPayload(BaseModel):
     update_id: int
@@ -109,104 +106,94 @@ class TelegramWebhookPayload(BaseModel):
 router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
+async def send_error_message_to_user(chat_id: int, bot_short_name: str, message: str):
+    try:
+        async with get_db() as db:
+            bot_id = await get_bot_id_by_short_name(bot_short_name, db)
+            bot_token = await get_bot_token(bot_id, db)
+            await send_telegram_message(chat_id, message, bot_token)
+    except Exception as e:
+        logger.error(f"Failed to send error message to user due to: {e}")
+
+async def process_message_type(message_data, chat_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
+    message_type, process_task, text_prefix = None, None, ""
+    task_params = {}
+
+    if message_data.text:
+        message_type = 'TEXT'
+        text_prefix = message_data.text
+        if message_data.text == "/start":
+            predefined_response_text = "Hi I'm Tabatha! What about you?"
+            await send_telegram_message(chat_id, predefined_response_text, await get_bot_token(bot_id, db))
+            text_prefix = predefined_response_text
+        else:
+            process_task = process_queue
+            task_params = {'chat_id': chat_id, 'db': db}  # common parameters for process_queue
+
+    elif message_data.photo:
+        message_type = 'PHOTO'
+        process_task = caption_photo
+        text_prefix = "[PROCESSING PHOTO]"
+        task_params = {'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
+
+    elif message_data.document and message_data.document.mime_type.startswith("image/"):
+        message_type = 'DOCUMENT'
+        process_task = caption_photo
+        text_prefix = "[PROCESSING DOCUMENT AS PHOTO]"
+        task_params = {'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
+
+    elif message_data.voice:
+        message_type = 'AUDIO'
+        process_task = transcribe_audio
+        text_prefix = "[TRANSCRIBING AUDIO]"
+        task_params = {'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for transcribe_audio
+
+    if message_type:
+        # Change payload.update_id to payload['update_id']
+        messages_info = [
+            {'message_data': TextMessage(chat_id=chat_id, user_id=0, bot_id=bot_id, message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
+            {'message_data': TextMessage(chat_id=chat_id, user_id=0, bot_id=bot_id, message_text="[AI PLACEHOLDER]", message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
+        ]
+
+        added_messages = await add_messages(db, messages_info)
+        if process_task and len(added_messages) > 1:
+            # Add specific parameters based on the message type
+            task_specific_params = {'message_pk': added_messages[0].pk_messages, 'ai_placeholder_pk': added_messages[1].pk_messages}
+            if message_data.photo or message_data.voice or message_data.document:
+                task_specific_params['file_id'] = message_data.photo[-1].file_id if message_data.photo else message_data.document.file_id if message_data.document else message_data.voice.file_id
+            
+            all_task_params = {**task_params, **task_specific_params}  # Merge common and specific parameters
+            background_tasks.add_task(process_task, **all_task_params)
+
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
-async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str):
+async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str, db: AsyncSession = Depends(get_db)):
+    chat_id = None # Declare chat_id outside the try block for wider scope
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")
-
-    raw_body = await request.body()
-    logger.info(f"Raw JSON payload: {raw_body.decode('utf-8')}")
-
     try:
-        payload_dict = await request.json()
-        payload = TelegramWebhookPayload(**payload_dict)
-    except Exception as e:
-        logger.error(f"Error parsing request body: {e}")
-        await handle_exception(e, chat_id, bot_short_name, status_code=500, detail=(f"Error parsing request body: {e}"))
+        payload = await request.json() # Define payload here
+        # Log the raw JSON payload
+        logger.debug('Raw JSON Payload: %s', payload)
 
-
-    message_data = payload.message
-    chat_id = message_data.chat['id']
-    message_id = message_data.message_id
-
-    async with get_db() as db:
+        payload_obj = TelegramWebhookPayload(**payload) # Parse JSON to Pydantic model
+        # Log the parsed payload
+        logger.debug('Parsed Payload: %s', payload_obj.dict())
+        
+        chat_id = payload_obj.message.chat['id']
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
-        # Check if the message is a '/start' bot command
-        if message_data.text == "/start": # and message_data.entities:
-            #for entity in message_data.entities:
-                #if entity.type == "bot_command" and message_data.text[entity.offset:entity.offset+entity.length] == "/start":
-
-                    bot_token = await get_bot_token(bot_id, db)
-                    predefined_response_text = "Hi I'm Tabatha! What about you?"  # Customize this message
-                    await send_telegram_message(chat_id, predefined_response_text, bot_token)
-
-                    # Create a TextMessage instance with the predefined response
-                    response_message = TextMessage(
-                        chat_id=chat_id, user_id=0, bot_id=bot_id,
-                        message_text=predefined_response_text, message_id=message_id,
-                        channel="TELEGRAM", update_id=payload.update_id
-                    )
-
-                    # Add the predefined response to the database
-                    added_message = await add_message(db, response_message, 'TEXT', 'Y', 'ASSISTANT')
-                    
-                    return {"status": "Predefined start message sent"}
-
-        elif message_data.photo:
-            # Handle photo message
-            largest_photo = message_data.photo[-1]  # Assuming the last photo is the largest
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text="[PROCESSING PHOTO]", message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message, 'PHOTO', 'N', 'USER')
-            ai_placeholder_rec = await add_message(db, internal_message, 'PHOTO', 'P', 'ASSISTANT')
-            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id, chat_id, largest_photo.file_id, db)
+        # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
+        await process_message_type(payload_obj.message, chat_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
 
 
-        # New check for document message
-        elif message_data.document and message_data.document.mime_type.startswith("image/"):
-            # Assuming document is an image, process similarly to a photo
-            document = message_data.document
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text="[PROCESSING DOCUMENT AS PHOTO]", message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message, 'DOCUMENT', 'N', 'USER')
-            ai_placeholder_rec = await add_message(db, internal_message, 'DOCUMENT', 'P', 'ASSISTANT')
-            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id, chat_id, document.file_id, db)
+    except Exception as e:
+        logger.error(f"An error occurred while processing the request: {e}")
+        if chat_id:
+            # Use background_tasks to add an error handling task
+            background_tasks.add_task(send_error_message_to_user, chat_id, bot_short_name, "Sorry, something went wrong. Please try again later.")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
-        elif message_data.voice:
-            # Handle voice message
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text="[TRANSCRIBING AUDIO]", message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message,'VOICE','N','USER')
-            ai_placeholder_rec = await add_message(db, internal_message, 'VOICE', 'P', 'ASSISTANT')
-            # Start transcription process in the background
-            background_tasks.add_task(transcribe_audio,  background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id,chat_id, message_data.voice.file_id, db)
-            #background_tasks.add_task(process_queue, added_message.chat_id, db)
-        elif message_data.text:
-            # Handle text message
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text=message_data.text, message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message,'TEXT','N','USER')
-            ai_placeholder_rec = await add_message(db, internal_message, 'TEXT', 'P', 'ASSISTANT')
-            background_tasks.add_task(process_queue, added_message.chat_id, ai_placeholder_rec.pk_messages, db)
-        else:
-            # If neither text nor voice is found
-            await handle_exception(e, chat_id, bot_short_name, status_code=400, detail="Unsupported message type") 
-
-        return {"pk_messages": added_message.pk_messages, "status": "Message processed successfully"}
-
+    return {"status": "Message processed successfully"}
 End of file: ./app/routers/telegram_webhook.py
 ___________
 Binary File: ./app/.DS_Store
@@ -289,11 +276,10 @@ AsyncSessionLocal = sessionmaker(
 )
 
 
-
-@asynccontextmanager
 async def get_db():
     async with AsyncSessionLocal() as session:
-        yield sessionEnd of file: ./app/database.py
+        yield session
+End of file: ./app/database.py
 ___________
 Binary File: ./app/__init__.py
 ___________
@@ -315,7 +301,7 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from app.controllers.message_processing import process_queue
 
 logger = logging.getLogger(__name__)
-async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, ai_placeholder_rec: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
     try:
         bot_token = await get_bot_token(bot_id=bot_id, db=db)
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
@@ -397,7 +383,7 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
 
             await mark_message_status(db, message_pk, 'N')
             os.remove(converted_file_path)
-            background_tasks.add_task(process_queue, chat_id, ai_placeholder_rec.pk_messages, db)
+            background_tasks.add_task(process_queue, chat_id, ai_placeholder_pk.pk_messages, db)
 
     except Exception as e:
         logger.error(f"Error in transcribe_audio: {e}")
@@ -431,27 +417,14 @@ End of file: ./app/utils/process_audio.py
 ___________
 ___________
 Start of file: ./app/utils/error_handler.py
-# app/utils/error_handler.py
+# app/routers/error_handler.py
 from fastapi import HTTPException
 import logging
-from app.database import get_db
-from app.database_operations import get_bot_token
-from app.controllers.telegram_integration import send_telegram_message
 
 logger = logging.getLogger(__name__)
 
-async def handle_exception(e, chat_id=None, bot_short_name=None, status_code=500, detail="An unexpected error occurred"):
+def handle_exception(e, status_code=500, detail=""):
     logger.error(f"Unexpected error: {str(e)}")
-    if chat_id and bot_short_name:
-        try:
-            async with get_db() as db:
-                bot_id = await get_bot_id_by_short_name(bot_short_name, db)
-                bot_token = await get_bot_token(bot_id, db)
-                error_message = "Sorry, something went wrong. Please try again later. "
-                await send_telegram_message(chat_id, error_message+detail, bot_token)
-                return {"pk_messages": added_message.pk_messages, "status": error_message+detail}
-        except Exception as send_error:
-            logger.error(f"Failed to send error message to user: {send_error}")
     raise HTTPException(status_code=status_code, detail=detail)
 End of file: ./app/utils/error_handler.py
 ___________
@@ -475,7 +448,7 @@ from app.controllers.message_processing import process_queue
 
 logger = logging.getLogger(__name__)
 
-async def caption_photo(background_tasks: BackgroundTasks, message_pk: int, ai_placeholder_rec: int,  bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+async def caption_photo(background_tasks: BackgroundTasks, message_pk: int, ai_placeholder_pk: int,  bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
     try:
         bot_token = await get_bot_token(bot_id=bot_id, db=db)
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
@@ -511,7 +484,7 @@ async def caption_photo(background_tasks: BackgroundTasks, message_pk: int, ai_p
             logger.info(f"Caption text: {caption_text}")
             await update_message_content(db, message_pk, caption_text)
             await mark_message_status(db, message_pk, 'N')
-            background_tasks.add_task(process_queue, chat_id, ai_placeholder_rec.pk_messages, db)
+            background_tasks.add_task(process_queue, chat_id, ai_placeholder_pk.pk_messages, db)
 
     except Exception as e:
         logger.error(f"Error in process_photo: {e}")
@@ -608,6 +581,7 @@ from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
+from typing import List, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -631,25 +605,37 @@ async def get_bot_id_by_short_name(bot_short_name: str, db: AsyncSession) -> int
         return None
 
 
-async def add_message(db: AsyncSession, message_data: TextMessage, type: str, is_processed: str, role: str) -> tbl_msg:
-    new_message = tbl_msg(
-        chat_id=message_data.chat_id,
-        user_id=message_data.user_id,
-        bot_id=message_data.bot_id,
-        content_text=message_data.message_text,
-        message_id=message_data.message_id,
-        channel=message_data.channel,
-        update_id=message_data.update_id,
-        message_date=datetime.now(),
-        type=type,
-        is_processed=is_processed,
-        role=role
-    )
-    db.add(new_message)
+async def add_messages(db: AsyncSession, messages_info: List[dict]) -> List[tbl_msg]:
+ 
+    new_messages = []
+    for message_info in messages_info:
+        message_data = message_info['message_data']
+        role = message_info['role']  # Dynamic role assignment
+        type = message_info.get('type', 'TEXT')  # Default type is 'TEXT'
+        is_processed = message_info.get('is_processed', 'N')  # Default is_processed status
+        
+        new_message = tbl_msg(
+            chat_id=message_data.chat_id,
+            user_id=message_data.user_id,
+            bot_id=message_data.bot_id,
+            content_text=message_data.message_text,
+            message_id=message_data.message_id,
+            channel=message_data.channel,
+            update_id=message_data.update_id,
+            message_date=datetime.now(),
+            type=type,
+            is_processed=is_processed,
+            role=role
+        )
+        db.add(new_message)
+        new_messages.append(new_message)
+
     await db.commit()
-    await db.refresh(new_message)
-    logger.debug(f"Message added  {new_message}")
-    return new_message
+    for new_message in new_messages:
+        await db.refresh(new_message)
+
+    logger.debug(f"Messages added: {[message.pk_messages for message in new_messages]}")
+    return new_messages
 
 async def update_message_content(db: AsyncSession, message_pk: int, new_content: str):
     try:
@@ -698,7 +684,7 @@ Start of file: ./app/controllers/message_processing.py
 import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import get_bot_token, add_message, mark_message_status
+from app.database_operations import get_bot_token, add_messages, mark_message_status, update_message_content
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import send_telegram_message
 from app.models.message import tbl_msg
@@ -713,7 +699,7 @@ from math import ceil
 
 logger = logging.getLogger(__name__)
 
-async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession):
+async def process_queue(chat_id: int, message_pk: int, ai_placeholder_pk: int,  db: AsyncSession):
     try:
         timestamp = datetime.now()
         await asyncio.sleep(3)
@@ -732,7 +718,7 @@ async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession
             logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
 
             if unprocessed_messages[0].message_date <= timestamp:
-                await process_message(unprocessed_messages, db, chat_id)
+                await process_message(unprocessed_messages, db, chat_id, ai_placeholder_pk)
             else:
                 # Skip processing as a new message arrived during the wait
                 logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
@@ -745,7 +731,7 @@ async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession
         await db.close()
 
 
-async def process_message(messages, db, chat_id):
+async def process_message(messages, db, chat_id, ai_placeholder_pk: int,):
     logger.debug(f"Messages to process: {messages}") # Debug statement
 
     # Mark all messages as processed once
@@ -770,26 +756,20 @@ async def process_message(messages, db, chat_id):
         for chunk in humanized_response:
             await send_telegram_message(chat_id, chunk, bot_token)
 
-        
-        # Construct the message data for the response message
-        response_message_data = TextMessage(
-            chat_id=chat_id,
-            user_id=0, # Assuming the bot is sending the message, user_id might be set to 0 or the bot's user ID
-            bot_id=messages[0].bot_id,
-            message_text=response_text,
-            message_id=0, # If you have a way to generate or track message IDs for outgoing messages, use it here
-            channel=messages[0].channel,
-            update_id=0 # Set to 0 or an appropriate value if you're tracking update IDs
-        )
-
         # Use the updated add_message function to save the response
         # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
-        await update_message_content(db, ai_placeholder_rec, response_text)
-        await mark_message_status(db, ai_placeholder_rec, 'Y')
+        await update_message_content(db, ai_placeholder_pk, response_text)
+        await mark_message_status(db, ai_placeholder_pk, 'Y')
 
-    # Mark all messages as processed again
-    for message in messages:
-        await mark_message_status(db, message.pk_messages, 'Y')
+        # Mark all messages as processed again
+        for message in messages:
+            await mark_message_status(db, message.pk_messages, 'Y')
+    
+    else:
+
+        # Response was not getted so we mark for reprocesing later
+        for message in messages:
+            await mark_message_status(db, message.pk_messages, 'N')
 
     # Log the count of records processed
     logger.info(f"{len(messages)} messages processed for chat_id {chat_id}") 
@@ -884,7 +864,7 @@ logger = logging.getLogger(__name__)
 
 async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Optional[str]:
     try:
-        messages = await db.execute(select(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id).order_by(tbl_msg.message_date))
+        messages = await db.execute(select(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id, tbl_msg.is_processed != 'S').order_by(tbl_msg.message_date))
         messages = messages.scalars().all()
         logger.info(f"Retrieved {len(messages)} messages for chat_id {chat_id} and bot_id {bot_id}")
         # Calculate initial payload size
