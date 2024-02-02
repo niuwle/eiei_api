@@ -1,4 +1,4 @@
-Date and Time: 28/01/2024 18.39.01
+Date and Time: 02/02/2024 12.13.05
 Directory Structure and Files in ./app:
 ./app/
 ├── __init__.py
@@ -21,9 +21,10 @@ Directory Structure and Files in ./app:
 ├── schemas.py
 └── utils/
     ├── error_handler.py
-    └── transcribe_audio.py
+    ├── process_audio.py
+    └── process_photo.py
 
-5 directories, 17 files
+5 directories, 18 files
 
 Details of Files:
 ___________
@@ -52,15 +53,19 @@ ___________
 Start of file: ./app/routers/telegram_webhook.py
 # app/routers/telegram-webhook.py
 import logging
+from typing import List
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_message, get_bot_id_by_short_name
+from app.database_operations import add_message, get_bot_id_by_short_name, get_bot_token
+from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
-from app.utils.transcribe_audio import transcribe_audio
+from app.utils.process_audio import transcribe_audio
+from app.utils.process_photo import caption_photo
 from app.utils.error_handler import handle_exception 
 import os
+
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +75,32 @@ class Voice(BaseModel):
     file_id: str
     file_size: int
 
+class PhotoSize(BaseModel):
+    file_id: str
+    file_unique_id: str
+    file_size: int
+    width: int
+    height: int
+
+class Document(BaseModel):
+    file_id: str
+    file_unique_id: str
+    file_size: int
+    file_name: str
+    mime_type: str
+    thumb: PhotoSize = None
+
 class Message(BaseModel):
     message_id: int
     from_: dict = Field(None, alias='from')
     chat: dict
     date: int
-    text: str = None  # Make text optional
-    voice: Voice = None  # Add voice field
+    text: str = None   
+    voice: Voice = None   
+    photo: List[PhotoSize] = None
+    document: Document = None
+
+
 
 class TelegramWebhookPayload(BaseModel):
     update_id: int
@@ -87,6 +111,9 @@ SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
 async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str):
+    if token != SECRET_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid token")
+
     raw_body = await request.body()
     logger.info(f"Raw JSON payload: {raw_body.decode('utf-8')}")
 
@@ -95,10 +122,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         payload = TelegramWebhookPayload(**payload_dict)
     except Exception as e:
         logger.error(f"Error parsing request body: {e}")
-        handle_exception(e)
+        await handle_exception(e, chat_id, bot_short_name, status_code=500, detail=(f"Error parsing request body: {e}"))
 
-    if token != SECRET_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid token")
 
     message_data = payload.message
     chat_id = message_data.chat['id']
@@ -107,7 +132,54 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
     async with get_db() as db:
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
-        if message_data.voice:
+        # Check if the message is a '/start' bot command
+        if message_data.text == "/start": # and message_data.entities:
+            #for entity in message_data.entities:
+                #if entity.type == "bot_command" and message_data.text[entity.offset:entity.offset+entity.length] == "/start":
+
+                    bot_token = await get_bot_token(bot_id, db)
+                    predefined_response_text = "Hi I'm Tabatha! What about you?"  # Customize this message
+                    await send_telegram_message(chat_id, predefined_response_text, bot_token)
+
+                    # Create a TextMessage instance with the predefined response
+                    response_message = TextMessage(
+                        chat_id=chat_id, user_id=0, bot_id=bot_id,
+                        message_text=predefined_response_text, message_id=message_id,
+                        channel="TELEGRAM", update_id=payload.update_id
+                    )
+
+                    # Add the predefined response to the database
+                    added_message = await add_message(db, response_message, 'TEXT', 'Y', 'ASSISTANT')
+                    
+                    return {"status": "Predefined start message sent"}
+
+        elif message_data.photo:
+            # Handle photo message
+            largest_photo = message_data.photo[-1]  # Assuming the last photo is the largest
+            internal_message = TextMessage(
+                chat_id=chat_id, user_id=0, bot_id=bot_id,
+                message_text="[PROCESSING PHOTO]", message_id=message_id,
+                channel="TELEGRAM", update_id=payload.update_id
+            )
+            added_message = await add_message(db, internal_message, 'PHOTO', 'N', 'USER')
+            ai_placeholder_rec = await add_message(db, internal_message, 'PHOTO', 'P', 'ASSISTANT')
+            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id, chat_id, largest_photo.file_id, db)
+
+
+        # New check for document message
+        elif message_data.document and message_data.document.mime_type.startswith("image/"):
+            # Assuming document is an image, process similarly to a photo
+            document = message_data.document
+            internal_message = TextMessage(
+                chat_id=chat_id, user_id=0, bot_id=bot_id,
+                message_text="[PROCESSING DOCUMENT AS PHOTO]", message_id=message_id,
+                channel="TELEGRAM", update_id=payload.update_id
+            )
+            added_message = await add_message(db, internal_message, 'DOCUMENT', 'N', 'USER')
+            ai_placeholder_rec = await add_message(db, internal_message, 'DOCUMENT', 'P', 'ASSISTANT')
+            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id, chat_id, document.file_id, db)
+
+        elif message_data.voice:
             # Handle voice message
             internal_message = TextMessage(
                 chat_id=chat_id, user_id=0, bot_id=bot_id,
@@ -115,8 +187,9 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 channel="TELEGRAM", update_id=payload.update_id
             )
             added_message = await add_message(db, internal_message,'VOICE','N','USER')
+            ai_placeholder_rec = await add_message(db, internal_message, 'VOICE', 'P', 'ASSISTANT')
             # Start transcription process in the background
-            background_tasks.add_task(transcribe_audio,  background_tasks, added_message.pk_messages,bot_id,chat_id, message_data.voice.file_id, db)
+            background_tasks.add_task(transcribe_audio,  background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id,chat_id, message_data.voice.file_id, db)
             #background_tasks.add_task(process_queue, added_message.chat_id, db)
         elif message_data.text:
             # Handle text message
@@ -126,10 +199,11 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 channel="TELEGRAM", update_id=payload.update_id
             )
             added_message = await add_message(db, internal_message,'TEXT','N','USER')
-            background_tasks.add_task(process_queue, added_message.chat_id, db)
+            ai_placeholder_rec = await add_message(db, internal_message, 'TEXT', 'P', 'ASSISTANT')
+            background_tasks.add_task(process_queue, added_message.chat_id, ai_placeholder_rec.pk_messages, db)
         else:
             # If neither text nor voice is found
-            raise HTTPException(status_code=400, detail="Unsupported message type")
+            await handle_exception(e, chat_id, bot_short_name, status_code=400, detail="Unsupported message type") 
 
         return {"pk_messages": added_message.pk_messages, "status": "Message processed successfully"}
 
@@ -149,7 +223,8 @@ TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL")
 OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 ASSISTANT_PROMPT = os.getenv("ASSISTANT_PROMPT")
-MONSTER_API_TOKEN = os.getenv("MONSTER_API_TOKEN")End of file: ./app/config.py
+MONSTER_API_TOKEN = os.getenv("MONSTER_API_TOKEN")
+HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")End of file: ./app/config.py
 ___________
 ___________
 Start of file: ./app/logging_config.py
@@ -222,15 +297,8 @@ async def get_db():
 ___________
 Binary File: ./app/__init__.py
 ___________
-Start of file: ./app/utils/error_handler.py
-
-def handle_exception(e, status_code=500, detail=""):
-    logger.error(f"Unexpected error: {str(e)}")
-    raise HTTPException(status_code=status_code, detail=detail)
-End of file: ./app/utils/error_handler.py
-___________
-___________
-Start of file: ./app/utils/transcribe_audio.py
+Start of file: ./app/utils/process_audio.py
+# app/routers/process_audio.py
 import asyncio
 import httpx
 import logging
@@ -247,13 +315,12 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from app.controllers.message_processing import process_queue
 
 logger = logging.getLogger(__name__)
-async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, ai_placeholder_rec: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
     try:
         bot_token = await get_bot_token(bot_id=bot_id, db=db)
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
 
         async with httpx.AsyncClient() as client:
-            # Get the file from Telegram
             file_response = await client.get(file_url)
             file_response.raise_for_status()
 
@@ -263,7 +330,7 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
             logger.info(f"full_file_url {full_file_url}")
 
             # Convert audio file format
-            converted_file_path = await convert_audio(full_file_url)
+            converted_file_path = await convert_audio(full_file_url)  # Ensure this uses the same API as PL/SQL function
 
             # Prepare the file for upload
             file_name = os.path.basename(converted_file_path)
@@ -271,55 +338,71 @@ async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, 
                 "file": (file_name, open(converted_file_path, "rb"), mimetypes.guess_type(converted_file_path)[0])
             }
             payload = {
-                "diarize": "true",
-                "language": "en"
+                "diarize": "false",
+                "do_sample": "true"
+                #,"language": "en"
             }
             headers = {
                 "accept": "application/json",
                 "authorization": f"Bearer {MONSTER_API_TOKEN}"
             }
 
-            # Send the transcription request with the file
+            # Send the transcription request
             transcription_response = await client.post(
-                'https://api.monsterapi.ai/v1/generate/whisper',
+                'https://api.monsterapi.ai/v1/generate/speech2text-v2',
                 data=payload,
                 files=files,
                 headers=headers
             )
-            logger.info(f"Monster transcription_response {transcription_response}")
+            response_json = transcription_response.json()
+            logger.debug(f"Monster transcription_response JSON: {response_json}")
+
 
             transcription_response.raise_for_status()
-            transcribed_text = transcription_response.json().get('text', '')
+            process_id = transcription_response.json().get('process_id', '')
 
-            logger.info(f"transcribed_text {transcribed_text}")
+            logger.info(f"Monster process_id {process_id}")
 
-        # Check if transcribed text is empty
-        if not transcribed_text:
-            error_message = "Transcription failed or returned empty result."
-            logger.error(error_message)
+            # Check the status of the transcription in a loop
+            max_attempts = 5
+            attempt_count = 0
+            transcribed_text = ''
+            while attempt_count < max_attempts:
+                await asyncio.sleep(3)  # Non-blocking sleep
+                status_response = await client.get(f'https://api.monsterapi.ai/v1/status/{process_id}',
+                headers=headers)
+                status = status_response.json().get('status', '')
 
-            # Update the database with an error message
-            await update_message_content(db, message_pk, error_message)
+                if status == 'COMPLETED':
+                    
+                    response_json = status_response.json()
+                    logger.debug(f"Monster response_json JSON: {response_json}")
+                    transcribed_text = response_json.get('result', {}).get('text', '')
+                    break
 
-            # Mark the message status as 'E' for error
-            #await mark_message_status(db, message_pk, 'E')
-        else:
-            logger.info(f"transcribed_text {transcribed_text}")
+                attempt_count += 1
+                await asyncio.sleep(3)  # Non-blocking sleep
 
-            # Update the database with the transcription result
-            await update_message_content(db, message_pk, transcribed_text)
+            response_json = status_response.json()
+            logger.info(f"Monster status transcription_response JSON: {response_json}")
 
-        # Clean up the temporary file
-        os.remove(converted_file_path)
+            # Handle the response
+            if not transcribed_text:
+                error_message = "[Audio]: Transcription failed or incomplete"
+                logger.error(error_message)
+                await update_message_content(db, message_pk, error_message)
+            else:
+                logger.info(f"transcribed_text {transcribed_text}")
+                await update_message_content(db, message_pk, transcribed_text)
 
-        # Continue with processing
-        background_tasks.add_task(process_queue, chat_id, db)
+            await mark_message_status(db, message_pk, 'N')
+            os.remove(converted_file_path)
+            background_tasks.add_task(process_queue, chat_id, ai_placeholder_rec.pk_messages, db)
 
     except Exception as e:
         logger.error(f"Error in transcribe_audio: {e}")
-        await mark_message_status(db, message_pk, 'E')  # Update your function signature if needed
+        await mark_message_status(db, message_pk, 'E')
         return None
-
 
 async def convert_audio(file_url: str) -> str:
     try:
@@ -344,7 +427,98 @@ async def convert_audio(file_url: str) -> str:
         logger.error(f'An error occurred during audio conversion: {e}')
 
     return ''
-End of file: ./app/utils/transcribe_audio.py
+End of file: ./app/utils/process_audio.py
+___________
+___________
+Start of file: ./app/utils/error_handler.py
+# app/utils/error_handler.py
+from fastapi import HTTPException
+import logging
+from app.database import get_db
+from app.database_operations import get_bot_token
+from app.controllers.telegram_integration import send_telegram_message
+
+logger = logging.getLogger(__name__)
+
+async def handle_exception(e, chat_id=None, bot_short_name=None, status_code=500, detail="An unexpected error occurred"):
+    logger.error(f"Unexpected error: {str(e)}")
+    if chat_id and bot_short_name:
+        try:
+            async with get_db() as db:
+                bot_id = await get_bot_id_by_short_name(bot_short_name, db)
+                bot_token = await get_bot_token(bot_id, db)
+                error_message = "Sorry, something went wrong. Please try again later. "
+                await send_telegram_message(chat_id, error_message+detail, bot_token)
+                return {"pk_messages": added_message.pk_messages, "status": error_message+detail}
+        except Exception as send_error:
+            logger.error(f"Failed to send error message to user: {send_error}")
+    raise HTTPException(status_code=status_code, detail=detail)
+End of file: ./app/utils/error_handler.py
+___________
+___________
+Start of file: ./app/utils/process_photo.py
+# app/routers/process_photo.py
+import asyncio
+import httpx
+import logging
+import os
+import mimetypes
+from app.database_operations import get_bot_token, mark_message_status, update_message_content
+from app.config import TELEGRAM_API_URL, HUGGINGFACE_API_TOKEN
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
+import subprocess
+import requests
+from tempfile import NamedTemporaryFile
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from app.controllers.message_processing import process_queue
+
+logger = logging.getLogger(__name__)
+
+async def caption_photo(background_tasks: BackgroundTasks, message_pk: int, ai_placeholder_rec: int,  bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+    try:
+        bot_token = await get_bot_token(bot_id=bot_id, db=db)
+        file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
+
+        async with httpx.AsyncClient() as client:
+            file_response = await client.get(file_url)
+            file_response.raise_for_status()
+
+            file_path = file_response.json().get("result", {}).get("file_path", "")
+            full_file_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+
+            # Download the photo file
+            photo_response = await client.get(full_file_url)
+            photo_response.raise_for_status()
+
+            # Set up the headers and send the request to Hugging Face API
+            headers = {
+                "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"
+            }
+
+            # Send the binary data of the photo directly in the request body
+            caption_response = await client.post(
+                'https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large',
+                content=photo_response.content,
+                headers=headers
+            )
+
+            caption_response.raise_for_status()
+            caption_json = caption_response.json()
+            caption_text = caption_json[0].get('generated_text', '[Photo]: Captioning failed or incomplete')
+
+            # Handle the response
+            logger.info(f"Caption text: {caption_text}")
+            await update_message_content(db, message_pk, caption_text)
+            await mark_message_status(db, message_pk, 'N')
+            background_tasks.add_task(process_queue, chat_id, ai_placeholder_rec.pk_messages, db)
+
+    except Exception as e:
+        logger.error(f"Error in process_photo: {e}")
+        await mark_message_status(db, message_pk, 'E')
+        return None
+
+End of file: ./app/utils/process_photo.py
 ___________
 ___________
 Start of file: ./app/models/__init__.py
@@ -532,10 +706,14 @@ from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
 from app.schemas import TextMessage
 import asyncio
+import regex as re
+
+from collections import deque
+from math import ceil
 
 logger = logging.getLogger(__name__)
 
-async def process_queue(chat_id: int, db: AsyncSession):
+async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession):
     try:
         timestamp = datetime.now()
         await asyncio.sleep(3)
@@ -584,9 +762,14 @@ async def process_message(messages, db, chat_id):
     logger.debug(f"Chat completion response: {response_text}") # Debug statement
 
     if response_text:
+        # Apply humanization to the response text
+        humanized_response = humanize_response(response_text)
         bot_token = await get_bot_token(messages[0].bot_id, db)
-        # Send the response text to Telegram once
-        await send_telegram_message(chat_id, response_text, bot_token)
+
+        # Loop through each chunk and send it as a separate message
+        for chunk in humanized_response:
+            await send_telegram_message(chat_id, chunk, bot_token)
+
         
         # Construct the message data for the response message
         response_message_data = TextMessage(
@@ -600,14 +783,32 @@ async def process_message(messages, db, chat_id):
         )
 
         # Use the updated add_message function to save the response
-        await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
+        # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
+        await update_message_content(db, ai_placeholder_rec, response_text)
+        await mark_message_status(db, ai_placeholder_rec, 'Y')
 
     # Mark all messages as processed again
     for message in messages:
         await mark_message_status(db, message.pk_messages, 'Y')
 
     # Log the count of records processed
-    logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
+    logger.info(f"{len(messages)} messages processed for chat_id {chat_id}") 
+    
+
+def humanize_response(paragraph):
+
+    paragraph = paragraph.replace('¡', '').replace('¿', '')
+    # Define a pattern to match a period, question mark, or exclamation mark
+    pattern = r'(?<=[.!?]) +'
+
+    # Use regex to split the paragraph into records based on the defined pattern
+    records = re.split(pattern, paragraph)
+
+    # Filter out empty strings
+    records = [rec for rec in records if rec.strip()]
+
+    return records
+
 End of file: ./app/controllers/message_processing.py
 ___________
 ___________
@@ -616,10 +817,19 @@ Start of file: ./app/controllers/telegram_integration.py
 import httpx
 import logging
 from app.config import TELEGRAM_API_URL
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> bool:
+    # Send 'typing' action
+    await send_typing_action(chat_id, bot_token)
+
+    # Calculate delay based on the length of the message
+    typing_delay = calculate_typing_delay(text)
+    await asyncio.sleep(typing_delay)
+
+    # Send the actual message
     url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
     payload = {"chat_id": chat_id, "text": text}
 
@@ -633,6 +843,28 @@ async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> bool
     except Exception as e:
         logger.error(f"Unexpected error in send_telegram_message: {str(e)}")
     return False
+
+async def send_typing_action(chat_id: int, bot_token: str) -> bool:
+    url = f'{TELEGRAM_API_URL}{bot_token}/sendChatAction'
+    payload = {"chat_id": chat_id, "action": "typing"}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload)
+        response.raise_for_status()
+        return True
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error sending typing action: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error in send_typing_action: {str(e)}")
+    return False
+
+
+def calculate_typing_delay(message: str) -> float:
+    average_typing_speed_per_minute = 200  # average words per minute (wpm)
+    words = len(message.split())
+    minutes_to_type = words / average_typing_speed_per_minute
+    return max(0.5, minutes_to_type * 60)  # Minimum delay of 0.5 seconds
 End of file: ./app/controllers/telegram_integration.py
 ___________
 ___________
@@ -658,8 +890,8 @@ async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Op
         # Calculate initial payload size
         payload_size = len(str([{"role": "system", "content": ASSISTANT_PROMPT}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]))
 
-        # Remove oldest messages if payload size exceeds 16k characters
-        while payload_size > 16 * 1024:
+        # Remove oldest messages if payload size exceeds 8k  characters
+        while payload_size > 8 * 1024:
             oldest_message = messages.pop(0)
             payload_size -= len(str({"role": oldest_message.role.lower(), "content": oldest_message.content_text}))
 

@@ -16,7 +16,7 @@ from app.controllers.message_processing import process_queue
 
 logger = logging.getLogger(__name__)
 
-async def caption_photo(background_tasks: BackgroundTasks, message_pk: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+async def caption_photo(background_tasks: BackgroundTasks, message_pk: int, ai_placeholder_rec: int,  bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
     try:
         bot_token = await get_bot_token(bot_id=bot_id, db=db)
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
@@ -52,7 +52,7 @@ async def caption_photo(background_tasks: BackgroundTasks, message_pk: int, bot_
             logger.info(f"Caption text: {caption_text}")
             await update_message_content(db, message_pk, caption_text)
             await mark_message_status(db, message_pk, 'N')
-            background_tasks.add_task(process_queue, chat_id, db)
+            background_tasks.add_task(process_queue, chat_id, ai_placeholder_rec.pk_messages, db)
 
     except Exception as e:
         logger.error(f"Error in process_photo: {e}")

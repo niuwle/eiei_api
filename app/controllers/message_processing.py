@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import get_bot_token, add_message, mark_message_status
+from app.database_operations import get_bot_token, add_messages, mark_message_status, update_message_content
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import send_telegram_message
 from app.models.message import tbl_msg
@@ -17,7 +17,7 @@ from math import ceil
 
 logger = logging.getLogger(__name__)
 
-async def process_queue(chat_id: int, db: AsyncSession):
+async def process_queue(chat_id: int, ai_placeholder_rec: int,  db: AsyncSession):
     try:
         timestamp = datetime.now()
         await asyncio.sleep(3)
@@ -36,7 +36,7 @@ async def process_queue(chat_id: int, db: AsyncSession):
             logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
 
             if unprocessed_messages[0].message_date <= timestamp:
-                await process_message(unprocessed_messages, db, chat_id)
+                await process_message(unprocessed_messages, db, chat_id, ai_placeholder_rec)
             else:
                 # Skip processing as a new message arrived during the wait
                 logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
@@ -49,7 +49,7 @@ async def process_queue(chat_id: int, db: AsyncSession):
         await db.close()
 
 
-async def process_message(messages, db, chat_id):
+async def process_message(messages, db, chat_id, ai_placeholder_rec: int,):
     logger.debug(f"Messages to process: {messages}") # Debug statement
 
     # Mark all messages as processed once
@@ -87,7 +87,9 @@ async def process_message(messages, db, chat_id):
         )
 
         # Use the updated add_message function to save the response
-        await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
+        # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
+        await update_message_content(db, ai_placeholder_rec, response_text)
+        await mark_message_status(db, ai_placeholder_rec, 'Y')
 
     # Mark all messages as processed again
     for message in messages:

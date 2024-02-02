@@ -6,6 +6,7 @@ from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
+from typing import List, Union
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,25 +30,37 @@ async def get_bot_id_by_short_name(bot_short_name: str, db: AsyncSession) -> int
         return None
 
 
-async def add_message(db: AsyncSession, message_data: TextMessage, type: str, is_processed: str, role: str) -> tbl_msg:
-    new_message = tbl_msg(
-        chat_id=message_data.chat_id,
-        user_id=message_data.user_id,
-        bot_id=message_data.bot_id,
-        content_text=message_data.message_text,
-        message_id=message_data.message_id,
-        channel=message_data.channel,
-        update_id=message_data.update_id,
-        message_date=datetime.now(),
-        type=type,
-        is_processed=is_processed,
-        role=role
-    )
-    db.add(new_message)
+async def add_messages(db: AsyncSession, messages_info: List[dict]) -> List[tbl_msg]:
+ 
+    new_messages = []
+    for message_info in messages_info:
+        message_data = message_info['message_data']
+        role = message_info['role']  # Dynamic role assignment
+        type = message_info.get('type', 'TEXT')  # Default type is 'TEXT'
+        is_processed = message_info.get('is_processed', 'N')  # Default is_processed status
+        
+        new_message = tbl_msg(
+            chat_id=message_data.chat_id,
+            user_id=message_data.user_id,
+            bot_id=message_data.bot_id,
+            content_text=message_data.message_text,
+            message_id=message_data.message_id,
+            channel=message_data.channel,
+            update_id=message_data.update_id,
+            message_date=datetime.now(),
+            type=type,
+            is_processed=is_processed,
+            role=role
+        )
+        db.add(new_message)
+        new_messages.append(new_message)
+
     await db.commit()
-    await db.refresh(new_message)
-    logger.debug(f"Message added  {new_message}")
-    return new_message
+    for new_message in new_messages:
+        await db.refresh(new_message)
+
+    logger.debug(f"Messages added: {[message.pk_messages for message in new_messages]}")
+    return new_messages
 
 async def update_message_content(db: AsyncSession, message_pk: int, new_content: str):
     try:

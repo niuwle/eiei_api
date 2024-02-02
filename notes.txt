@@ -259,7 +259,7 @@ curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
 
 
 --test text
-curl -X POST "https://eiei-api.onrender.com/telegram-webhook/test/SampleBot" \
+curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
      -d '{"update_id":103499615,"message":{"message_id":403,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706204019,"text":"test"}}'
 
@@ -273,6 +273,12 @@ curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
      -d '{"update_id":103499717,"message":{"message_id":750,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706612530,"photo":[{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADcwADNAQ","file_unique_id":"AQAD06wxG_s6yEV4","file_size":1581,"width":90,"height":90},{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADbQADNAQ","file_unique_id":"AQAD06wxG_s6yEVy","file_size":25838,"width":320,"height":320},{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADeAADNAQ","file_unique_id":"AQAD06wxG_s6yEV9","file_size":169120,"width":800,"height":800},{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADeQADNAQ","file_unique_id":"AQAD06wxG_s6yEV-","file_size":293026,"width":1024,"height":1024}]}}'
+
+
+--test doc
+curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
+     -H "Content-Type: application/json" \
+     -d '{"update_id":103499728,"message":{"message_id":784,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706869562,"forward_origin":{"type":"user","sender_user":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"date":1706626590},"forward_from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"forward_date":1706626590,"document":{"file_name":"DALL\u00b7E_2023_12_20_17_33_33_Abstract_and_vibrant_scenes_for_a_Berlin.png","mime_type":"image/png","thumbnail":{"file_id":"AAMCAQADGQEAAgMQZbzDOt7FEFhnmd9Op1yBxLrjMnEAApoDAAL7OshFxT8ZCvtK8BIBAAdtAAM0BA","file_unique_id":"AQADmgMAAvs6yEVy","file_size":23499,"width":320,"height":183},"thumb":{"file_id":"AAMCAQADGQEAAgMQZbzDOt7FEFhnmd9Op1yBxLrjMnEAApoDAAL7OshFxT8ZCvtK8BIBAAdtAAM0BA","file_unique_id":"AQADmgMAAvs6yEVy","file_size":23499,"width":320,"height":183},"file_id":"BQACAgEAAxkBAAIDEGW8wzrexRBYZ5nfTqdcgcS64zJxAAKaAwAC-zrIRcU_GQr7SvASNAQ","file_unique_id":"AgADmgMAAvs6yEU","file_size":3705652}}}'
 
 
 Test json from bot

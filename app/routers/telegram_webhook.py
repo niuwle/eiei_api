@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_message, get_bot_id_by_short_name, get_bot_token
+from app.database_operations import add_messages, get_bot_id_by_short_name, get_bot_token
 from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
@@ -56,8 +56,21 @@ class TelegramWebhookPayload(BaseModel):
 router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
+async def send_error_message_to_user(chat_id: int, bot_short_name: str, message: str):
+    try:
+        async with get_db() as db:
+            bot_id = await get_bot_id_by_short_name(bot_short_name, db)
+            bot_token = await get_bot_token(bot_id, db)
+            await send_telegram_message(chat_id, message, bot_token)
+    except Exception as e:
+        logger.error(f"Failed to send error message to user due to: {e}")
+
+
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
 async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str):
+        
+    chat_id = None  # Initialize chat_id to ensure it's available for error handling
+
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")
 
@@ -67,86 +80,194 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
     try:
         payload_dict = await request.json()
         payload = TelegramWebhookPayload(**payload_dict)
-    except Exception as e:
-        logger.error(f"Error parsing request body: {e}")
-        await handle_exception(e, chat_id, bot_short_name, status_code=500, detail=(f"Error parsing request body: {e}"))
+        message_data = payload.message
+        chat_id = message_data.chat['id']
+        message_id = message_data.message_id
+        
+        async with get_db() as db:
+            bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
+            # Check if the message is a '/start' bot command
+            if message_data.text == "/start": # and message_data.entities:
+                #for entity in message_data.entities:
+                    #if entity.type == "bot_command" and message_data.text[entity.offset:entity.offset+entity.length] == "/start":
 
-    message_data = payload.message
-    chat_id = message_data.chat['id']
-    message_id = message_data.message_id
+                        bot_token = await get_bot_token(bot_id, db)
+                        predefined_response_text = "Hi I'm Tabatha! What about you?"  # Customize this message
+                        await send_telegram_message(chat_id, predefined_response_text, bot_token)
 
-    async with get_db() as db:
-        bot_id = await get_bot_id_by_short_name(bot_short_name, db)
+                        # Create a TextMessage instance with the predefined response
+                        response_message = TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text=predefined_response_text, message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        )
 
-        # Check if the message is a '/start' bot command
-        if message_data.text == "/start": # and message_data.entities:
-            #for entity in message_data.entities:
-                #if entity.type == "bot_command" and message_data.text[entity.offset:entity.offset+entity.length] == "/start":
+                        # Add the predefined response to the database
+                        added_message = await add_messages(db, response_message, 'TEXT', 'Y', 'ASSISTANT')
+                        
+                        return {"status": "Predefined start message sent"}
 
-                    bot_token = await get_bot_token(bot_id, db)
-                    predefined_response_text = "Hi I'm Tabatha! What about you?"  # Customize this message
-                    await send_telegram_message(chat_id, predefined_response_text, bot_token)
+            elif message_data.photo:
+                # Handle photo message
+                largest_photo = message_data.photo[-1]  # Assuming the last photo is the largest
 
-                    # Create a TextMessage instance with the predefined response
-                    response_message = TextMessage(
-                        chat_id=chat_id, user_id=0, bot_id=bot_id,
-                        message_text=predefined_response_text, message_id=message_id,
-                        channel="TELEGRAM", update_id=payload.update_id
-                    )
+                messages_info = [
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text="[PROCESSING PHOTO]", message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'PHOTO',
+                        'role': 'USER',
+                        'is_processed': 'N'
+                    },
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text="[AI PLACEHOLDER]", message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'TEXT',
+                        'role': 'USER',
+                        'is_processed': 'P'
+                    }
+                ]
 
-                    # Add the predefined response to the database
-                    added_message = await add_message(db, response_message, 'TEXT', 'Y', 'ASSISTANT')
+                # Add messages
+                added_messages = await add_messages(db, messages_info)
+
+                # Split PKs into two variables
+                user_msg_pk = added_messages[0].pk_messages if added_messages else None
+                ai_placeholder_pk = added_messages[1].pk_messages if len(added_messages) > 1 else None
+
+                # Use the PKs as needed
+                if user_msg_pk and ai_placeholder_pk:
+                        
+                    background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id, chat_id, largest_photo.file_id, db)
+                else:
+                    logger.error("Failed to add messages to the database.")
                     
-                    return {"status": "Predefined start message sent"}
+            # New check for document message
+            elif message_data.document and message_data.document.mime_type.startswith("image/"):
+                messages_info = [
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text="[PROCESSING DOCUMENT AS PHOTO]", message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'DOCUMENT',
+                        'role': 'USER',
+                        'is_processed': 'N'
+                    },
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text="[AI PLACEHOLDER]", message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'TEXT',
+                        'role': 'USER',
+                        'is_processed': 'P'
+                    }
+                ]
 
-        elif message_data.photo:
-            # Handle photo message
-            largest_photo = message_data.photo[-1]  # Assuming the last photo is the largest
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text="[PROCESSING PHOTO]", message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message, 'PHOTO', 'N', 'USER')
-            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, bot_id, chat_id, largest_photo.file_id, db)
+                # Add messages
+                added_messages = await add_messages(db, messages_info)
 
+                # Split PKs into two variables
+                user_msg_pk = added_messages[0].pk_messages if added_messages else None
+                ai_placeholder_pk = added_messages[1].pk_messages if len(added_messages) > 1 else None
 
-        # New check for document message
-        elif message_data.document and message_data.document.mime_type.startswith("image/"):
-            # Assuming document is an image, process similarly to a photo
-            document = message_data.document
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text="[PROCESSING DOCUMENT AS PHOTO]", message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message, 'DOCUMENT', 'N', 'USER')
-            background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, bot_id, chat_id, document.file_id, db)
+                # Use the PKs as needed
+                if user_msg_pk and ai_placeholder_pk:
+                    
+                    background_tasks.add_task(caption_photo, background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id, chat_id, document.file_id, db)
+                else:
+                    logger.error("Failed to add messages to the database.")
 
-        elif message_data.voice:
-            # Handle voice message
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text="[TRANSCRIBING AUDIO]", message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message,'VOICE','N','USER')
-            # Start transcription process in the background
-            background_tasks.add_task(transcribe_audio,  background_tasks, added_message.pk_messages,bot_id,chat_id, message_data.voice.file_id, db)
-            #background_tasks.add_task(process_queue, added_message.chat_id, db)
-        elif message_data.text:
-            # Handle text message
-            internal_message = TextMessage(
-                chat_id=chat_id, user_id=0, bot_id=bot_id,
-                message_text=message_data.text, message_id=message_id,
-                channel="TELEGRAM", update_id=payload.update_id
-            )
-            added_message = await add_message(db, internal_message,'TEXT','N','USER')
-            background_tasks.add_task(process_queue, added_message.chat_id, db)
-        else:
-            # If neither text nor voice is found
-            await handle_exception(e, chat_id, bot_short_name, status_code=400, detail="Unsupported message type") 
+            elif message_data.voice:
+                # Prepare messages with dynamic roles
+                messages_info = [
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text="[TRANSCRIBING AUDIO]", message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'AUDIO',
+                        'role': 'USER',
+                        'is_processed': 'N'
+                    },
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text="[AI PLACEHOLDER]", message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'TEXT',
+                        'role': 'USER',
+                        'is_processed': 'P'
+                    }
+                ]
 
-        return {"pk_messages": added_message.pk_messages, "status": "Message processed successfully"}
+                # Add messages
+                added_messages = await add_messages(db, messages_info)
 
+                # Split PKs into two variables
+                user_msg_pk = added_messages[0].pk_messages if added_messages else None
+                ai_placeholder_pk = added_messages[1].pk_messages if len(added_messages) > 1 else None
+
+                # Use the PKs as needed
+                if user_msg_pk and ai_placeholder_pk:
+                    background_tasks.add_task(transcribe_audio,  background_tasks, added_message.pk_messages, ai_placeholder_rec.pk_messages, bot_id,chat_id, message_data.voice.file_id, db)
+                else:
+                    logger.error("Failed to add messages to the database.")
+
+            elif message_data.text:
+                # Prepare messages with dynamic roles
+                messages_info = [
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text=message_data.text, message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'TEXT',
+                        'role': 'USER',
+                        'is_processed': 'N'
+                    },
+                    {
+                        'message_data': TextMessage(
+                            chat_id=chat_id, user_id=0, bot_id=bot_id,
+                            message_text="[AI PLACEHOLDER]", message_id=message_id,
+                            channel="TELEGRAM", update_id=payload.update_id
+                        ),
+                        'type': 'TEXT',
+                        'role': 'USER',
+                        'is_processed': 'P'
+                    }
+                ]
+
+                # Add messages
+                added_messages = await add_messages(db, messages_info)
+
+                # Split PKs into two variables
+                user_msg_pk = added_messages[0].pk_messages if added_messages else None
+                ai_placeholder_pk = added_messages[1].pk_messages if len(added_messages) > 1 else None
+
+                # Use the PKs as needed
+                if user_msg_pk and ai_placeholder_pk:
+                    background_tasks.add_task(process_queue, chat_id,  ai_placeholder_pk, db)
+                else:
+                    logger.error("Failed to add messages to the database.")
+
+    except Exception as e:
+        logger.error(f"An error occurred while processing the request: {e}")
+        if chat_id:
+            background_tasks.add_task(send_error_message_to_user, chat_id, bot_short_name, "Sorry, something went wrong. Please try again later.")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+    return {"status": "Message processed successfully"}
