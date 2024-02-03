@@ -28,8 +28,6 @@ async def process_queue(chat_id: int, message_pk: int, ai_placeholder_pk: int,  
             result = await db.execute(stmt)
             unprocessed_messages = result.scalars().all()
 
-        logger.info(f"Unprocessed messages: {unprocessed_messages}") 
-
         logger.debug(f"Unprocessed messages: {unprocessed_messages}") # Debug statement
 
         if unprocessed_messages:
@@ -49,7 +47,7 @@ async def process_queue(chat_id: int, message_pk: int, ai_placeholder_pk: int,  
         await db.close()
 
 
-async def process_message(messages, db, chat_id, ai_placeholder_pk: int,):
+async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
     logger.debug(f"Messages to process: {messages}") # Debug statement
 
     # Mark all messages as processed once

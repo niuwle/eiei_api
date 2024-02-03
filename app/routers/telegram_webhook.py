@@ -81,19 +81,19 @@ async def process_message_type(message_data, chat_id, message_id, bot_id, bot_sh
         message_type = 'PHOTO'
         process_task = caption_photo
         text_prefix = "[PROCESSING PHOTO]"
-        task_params = {'background_tasks':'background_tasks', 'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
+        task_params = { 'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
 
     elif message_data.document and message_data.document.mime_type.startswith("image/"):
         message_type = 'DOCUMENT'
         process_task = caption_photo
         text_prefix = "[PROCESSING DOCUMENT AS PHOTO]"
-        task_params = {'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
+        task_params = {'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
 
     elif message_data.voice:
         message_type = 'AUDIO'
         process_task = transcribe_audio
         text_prefix = "[TRANSCRIBING AUDIO]"
-        task_params = {'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for transcribe_audio
+        task_params = {'background_tasks': background_tasks, 'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for transcribe_audio
 
     if message_type:
         # Change payload.update_id to payload['update_id']
@@ -110,11 +110,7 @@ async def process_message_type(message_data, chat_id, message_id, bot_id, bot_sh
                 task_specific_params['file_id'] = message_data.photo[-1].file_id if message_data.photo else message_data.document.file_id if message_data.document else message_data.voice.file_id
             
             all_task_params = {**task_params, **task_specific_params}  # Merge common and specific parameters
-            if message_data.text:
-                background_tasks.add_task(process_task, **all_task_params)
-            else:
-                background_tasks.add_task(process_task, background_tasks=background_tasks, **all_task_params)
-                
+            background_tasks.add_task(process_task, **all_task_params)
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
 async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str, db: AsyncSession = Depends(get_db)):

@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from app.controllers.message_processing import process_queue
 
 logger = logging.getLogger(__name__)
-async def transcribe_audio(background_tasks: BackgroundTasks,  message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+async def transcribe_audio(background_tasks,   message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
     try:
         bot_token = await get_bot_token(bot_id=bot_id, db=db)
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
