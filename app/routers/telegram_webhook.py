@@ -45,6 +45,7 @@ class Message(BaseModel):
     voice: Voice = None
     photo: List[PhotoSize] = None
     document: Document = None
+    caption: str = None
 
 class TelegramWebhookPayload(BaseModel):
     update_id: int
@@ -81,13 +82,15 @@ async def process_message_type(message_data, chat_id, message_id, bot_id, bot_sh
         message_type = 'PHOTO'
         process_task = caption_photo
         text_prefix = "[PROCESSING PHOTO]"
-        task_params = { 'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
+        user_caption = message_data.caption if message_data.caption else None
+        task_params = { 'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db, 'user_caption': user_caption}
 
     elif message_data.document and message_data.document.mime_type.startswith("image/"):
         message_type = 'DOCUMENT'
         process_task = caption_photo
         text_prefix = "[PROCESSING DOCUMENT AS PHOTO]"
-        task_params = {'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for caption_photo
+        user_caption = message_data.caption if message_data.caption else None
+        task_params = {'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db,'user_caption': user_caption}
 
     elif message_data.voice:
         message_type = 'AUDIO'

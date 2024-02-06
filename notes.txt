@@ -272,9 +272,9 @@ curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
 --test img
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
-     -d '{"update_id":103499717,"message":{"message_id":750,"from":{"id":6449898496,"is_bot":false,"first_name":"P","language_code":"en"},"chat":{"id":6449898496,"first_name":"P","type":"private"},"date":1706612530,"photo":[{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADcwADNAQ","file_unique_id":"AQAD06wxG_s6yEV4","file_size":1581,"width":90,"height":90},{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADbQADNAQ","file_unique_id":"AQAD06wxG_s6yEVy","file_size":25838,"width":320,"height":320},{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADeAADNAQ","file_unique_id":"AQAD06wxG_s6yEV9","file_size":169120,"width":800,"height":800},{"file_id":"AgACAgEAAxkBAAIC7mW41zEJmCIz4S6EjD51l7ryboy0AALTrDEb-zrIRRZH7WqqS0_jAQADAgADeQADNAQ","file_unique_id":"AQAD06wxG_s6yEV-","file_size":293026,"width":1024,"height":1024}]}}'
+     -d '{"update_id": 103499757, "message": {"message_id": 867, "from": {"id": 6449898496, "is_bot": false, "first_name": "P", "language_code": "en"}, "chat": {"id": 6449898496, "first_name": "P", "type": "private"}, "date": 1707243826, "forward_origin": {"type": "user", "sender_user": {"id": 6449898496, "is_bot": false, "first_name": "P", "language_code": "en"}, "date": 1706955414}, "forward_from": {"id": 6449898496, "is_bot": false, "first_name": "P", "language_code": "en"}, "forward_date": 1706955414, "photo": [{"file_id": "AgACAgEAAxkBAAIDY2XCeTJm7kl6T_4Jk0Ef7Qh28IuHAALrrTEbaFPwRRrMwpUyzU91AQADAgADcwADNAQ", "file_unique_id": "AQAD660xG2hT8EV4", "file_size": 1288, "width": 51, "height": 90}, {"file_id": "AgACAgEAAxkBAAIDY2XCeTJm7kl6T_4Jk0Ef7Qh28IuHAALrrTEbaFPwRRrMwpUyzU91AQADAgADbQADNAQ", "file_unique_id": "AQAD660xG2hT8EVy", "file_size": 16579, "width": 180, "height": 320}, {"file_id": "AgACAgEAAxkBAAIDY2XCeTJm7kl6T_4Jk0Ef7Qh28IuHAALrrTEbaFPwRRrMwpUyzU91AQADAgADeAADNAQ", "file_unique_id": "AQAD660xG2hT8EV9", "file_size": 64783, "width": 450, "height": 800}, {"file_id": "AgACAgEAAxkBAAIDY2XCeTJm7kl6T_4Jk0Ef7Qh28IuHAALrrTEbaFPwRRrMwpUyzU91AQADAgADeQADNAQ", "file_unique_id": "AQAD660xG2hT8EV-", "file_size": 115026, "width": 720, "height": 1280}], "caption": "Que te parece"}}'
 
-
+     
 --test doc
 curl -X POST "http://localhost:8000/telegram-webhook/test/SampleBot" \
      -H "Content-Type: application/json" \
@@ -301,3 +301,5 @@ Test json from bot
     "text": "test"
   }
 }
+
+YkPeVx2L

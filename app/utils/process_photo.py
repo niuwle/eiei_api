@@ -1,4 +1,3 @@
-# app/routers/process_photo.py
 import asyncio
 import httpx
 import logging
@@ -16,7 +15,7 @@ from app.controllers.message_processing import process_queue
 
 logger = logging.getLogger(__name__)
 
-async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: int,  bot_id: int, chat_id: int, file_id: str, db: AsyncSession) -> Optional[str]:
+async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, file_id: str, db: AsyncSession, user_caption: Optional[str] = None) -> Optional[str]:
     try:
         bot_token = await get_bot_token(bot_id=bot_id, db=db)
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
@@ -48,6 +47,10 @@ async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: in
             caption_json = caption_response.json()
             caption_text = caption_json[0].get('generated_text', '[Photo]: Captioning failed or incomplete')
 
+            # Concatenate the user caption with the generated caption if it exists
+            if user_caption:
+                caption_text = f"{caption_text}. {user_caption}"
+
             # Handle the response
             logger.info(f"Caption text: {caption_text}")
             await update_message_content(db, message_pk, caption_text)
@@ -58,4 +61,3 @@ async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: in
         logger.error(f"Error in process_photo: {e}")
         await mark_message_status(db, message_pk, 'E')
         return None
-
