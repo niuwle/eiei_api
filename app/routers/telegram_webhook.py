@@ -6,7 +6,7 @@ from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_messages, get_bot_id_by_short_name, get_bot_token
+from app.database_operations import add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id
 from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
@@ -126,7 +126,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         logger.debug('Raw JSON Payload: %s', payload)
 
         update_id = payload.get('update_id')
-        
+
+        #Maintain the following code will activate in PROD, DISABLED FOR TESTING POURPOSES NOW
         # Check if update_id has already been processed
         #existing_msg_query = select(tbl_msg).where(tbl_msg.update_id == update_id)
         #result = await db.execute(existing_msg_query)
@@ -140,6 +141,15 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         logger.debug('Parsed Payload: %s', payload_obj.dict())
 
         chat_id = payload_obj.message.chat['id']
+
+        # Handle /reset command specifically
+        if payload_obj.message.text == "/reset":
+            # Call reset_messages_by_chat_id for the current chat_id
+            await reset_messages_by_chat_id(db, chat_id)
+            await send_telegram_message(chat_id, "All messages have been reset.", await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db))
+            return {"status": "Messages reset successfully"}
+
+
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
         # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type

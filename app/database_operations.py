@@ -91,3 +91,24 @@ async def mark_message_status(db: AsyncSession, message_pk: int, new_status: str
     except SQLAlchemyError as e:
         logger.error(f"Database error in mark_message_status: {e}")
         raise
+
+async def reset_messages_by_chat_id(db: AsyncSession, chat_id: int) -> None:
+    try:
+        # Select all messages for the given chat_id
+        query = select(tbl_msg).where(tbl_msg.chat_id == chat_id)
+        result = await db.execute(query)
+        messages = result.scalars().all()
+
+        # Check if there are messages to update
+        if messages:
+            for message in messages:
+                message.is_processed = 'R'  # Set status to 'R'
+            await db.commit()  # Commit changes to the database
+
+            logger.info(f"All messages for chat_id {chat_id} have been marked as 'R'")
+        else:
+            logger.warning(f"No messages found for chat_id {chat_id}")
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in reset_messages_by_chat_id: {e}")
+        raise
