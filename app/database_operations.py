@@ -50,6 +50,7 @@ async def add_messages(db: AsyncSession, messages_info: List[dict]) -> List[tbl_
             message_date=datetime.now(),
             type=type,
             is_processed=is_processed,
+            is_reset='N',
             role=role
         )
         db.add(new_message)
