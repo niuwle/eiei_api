@@ -20,6 +20,7 @@ class tbl_msg(Base):
     update_id = Column(BigInteger)
     message_id = Column(BigInteger)
     is_processed = Column(String(1))
+    is_reset = Column(String(1))
     created_by = Column(String(1000))
     created_on = Column(DateTime, default=func.now()) # Default to the current timestamp
     updated_by = Column(String(1000))

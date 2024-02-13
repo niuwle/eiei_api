@@ -102,10 +102,10 @@ async def reset_messages_by_chat_id(db: AsyncSession, chat_id: int) -> None:
         # Check if there are messages to update
         if messages:
             for message in messages:
-                message.is_processed = 'R'  # Set status to 'R'
+                message.is_reset = 'Y' 
             await db.commit()  # Commit changes to the database
 
-            logger.info(f"All messages for chat_id {chat_id} have been marked as 'R'")
+            logger.info(f"All messages for chat_id {chat_id} have been marked as reset")
         else:
             logger.warning(f"No messages found for chat_id {chat_id}")
 
