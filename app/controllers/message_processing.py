@@ -9,7 +9,7 @@ from app.models.message import tbl_msg
 from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
 from app.schemas import TextMessage
-from app.utils.generate_audio import generate_audio_from_text
+from app.utils.generate_audio import generate_audio_from_text, generate_audio_with_monsterapi
 import asyncio
 import regex as re
 
@@ -71,7 +71,7 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
         if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
             logger.debug(f"user is awaiting audio generation") # Debug statement
             # Generate audio from the response text
-            audio_file_path = await generate_audio_from_text(text=response_text)
+            audio_file_path = await generate_audio_with_monsterapi(text=response_text)
             if audio_file_path:
                 # Send the audio file to the user
                 await send_voice_note(chat_id=chat_id, audio_file_path=audio_file_path, bot_token=await get_bot_token(messages[0].bot_id, db))
