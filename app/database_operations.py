@@ -114,18 +114,36 @@ async def reset_messages_by_chat_id(db: AsyncSession, chat_id: int) -> None:
     except SQLAlchemyError as e:
         logger.error(f"Database error in reset_messages_by_chat_id: {e}")
         raise
-
+        
 async def mark_chat_as_awaiting(db: AsyncSession, channel: str, chat_id: int, bot_id: int, user_id: int, awaiting_type: str, status: str = "AWAITING"):
-    new_awaiting_input = tbl_300_awaiting_user_input(
-        channel=channel,
-        chat_id=chat_id,
-        bot_id=bot_id,
-        user_id=user_id,
-        awaiting_type=awaiting_type,
-        status=status
+    # First, check if a matching record already exists
+    existing_query = select(tbl_300_awaiting_user_input).where(
+        tbl_300_awaiting_user_input.channel == channel,
+        tbl_300_awaiting_user_input.chat_id == chat_id,
+        tbl_300_awaiting_user_input.bot_id == bot_id,
+        tbl_300_awaiting_user_input.user_id == user_id,
+        tbl_300_awaiting_user_input.awaiting_type == awaiting_type,
+        tbl_300_awaiting_user_input.status == status
     )
-    db.add(new_awaiting_input)
-    await db.commit()
+    
+    result = await db.execute(existing_query)
+    existing_record = result.scalars().first()
+    
+    # Only proceed to insert if no existing record is found
+    if not existing_record:
+        new_awaiting_input = tbl_300_awaiting_user_input(
+            channel=channel,
+            chat_id=chat_id,
+            bot_id=bot_id,
+            user_id=user_id,
+            awaiting_type=awaiting_type,
+            status=status
+        )
+        db.add(new_awaiting_input)
+        await db.commit()
+        return True  # Return True to indicate a new record was inserted
+    else:
+        return False  # Return False to indicate no insertion was made
 
 async def check_if_chat_is_awaiting(db: AsyncSession, chat_id: int, awaiting_type: str) -> bool:
     query = select(tbl_300_awaiting_user_input).where(tbl_300_awaiting_user_input.chat_id == chat_id, tbl_300_awaiting_user_input.awaiting_type == awaiting_type, tbl_300_awaiting_user_input.status == "AWAITING")
