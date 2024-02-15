@@ -2,13 +2,14 @@
 import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import get_bot_token, add_messages, mark_message_status, update_message_content
+from app.database_operations import get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
 from app.controllers.ai_communication import get_chat_completion
-from app.controllers.telegram_integration import send_telegram_message
+from app.controllers.telegram_integration import send_telegram_message, send_audio_message, send_voice_note
 from app.models.message import tbl_msg
 from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
 from app.schemas import TextMessage
+from app.utils.generate_audio import generate_audio_from_text
 import asyncio
 import regex as re
 
@@ -64,13 +65,29 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
     logger.debug(f"Chat completion response: {response_text}") # Debug statement
 
     if response_text:
-        # Apply humanization to the response text
-        humanized_response = humanize_response(response_text)
-        bot_token = await get_bot_token(messages[0].bot_id, db)
 
-        # Loop through each chunk and send it as a separate message
-        for chunk in humanized_response:
-            await send_telegram_message(chat_id, chunk, bot_token)
+        logger.debug(f"chat_id1234: {chat_id}") # Debug statement
+                # Check if the user is awaiting audio generation
+        if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
+            logger.debug(f"user is awaiting audio generation") # Debug statement
+            # Generate audio from the response text
+            audio_file_path = await generate_audio_from_text(text=response_text)
+            if audio_file_path:
+                # Send the audio file to the user
+                await send_voice_note(chat_id=chat_id, audio_file_path=audio_file_path, bot_token=await get_bot_token(messages[0].bot_id, db))
+                # Clear the awaiting status
+                await clear_awaiting_status(db=db, chat_id=chat_id)
+            else:
+                logger.error("Failed to generate audio")
+        else:
+                
+            # Apply humanization to the response text
+            humanized_response = humanize_response(response_text)
+            bot_token = await get_bot_token(messages[0].bot_id, db)
+
+            # Loop through each chunk and send it as a separate message
+            for chunk in humanized_response:
+                await send_telegram_message(chat_id, chunk, bot_token)
 
         # Use the updated add_message function to save the response
         # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')

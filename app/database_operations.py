@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from app.models.telegram_config import TelegramConfig
+from app.models.awaiting_user_input import tbl_300_awaiting_user_input
 from datetime import datetime
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -113,3 +114,29 @@ async def reset_messages_by_chat_id(db: AsyncSession, chat_id: int) -> None:
     except SQLAlchemyError as e:
         logger.error(f"Database error in reset_messages_by_chat_id: {e}")
         raise
+
+async def mark_chat_as_awaiting(db: AsyncSession, channel: str, chat_id: int, bot_id: int, user_id: int, awaiting_type: str, status: str = "AWAITING"):
+    new_awaiting_input = tbl_300_awaiting_user_input(
+        channel=channel,
+        chat_id=chat_id,
+        bot_id=bot_id,
+        user_id=user_id,
+        awaiting_type=awaiting_type,
+        status=status
+    )
+    db.add(new_awaiting_input)
+    await db.commit()
+
+async def check_if_chat_is_awaiting(db: AsyncSession, chat_id: int, awaiting_type: str) -> bool:
+    query = select(tbl_300_awaiting_user_input).where(tbl_300_awaiting_user_input.chat_id == chat_id, tbl_300_awaiting_user_input.awaiting_type == awaiting_type, tbl_300_awaiting_user_input.status == "AWAITING")
+    result = await db.execute(query)
+    return result.scalar_one_or_none() is not None
+
+
+async def clear_awaiting_status(db: AsyncSession, chat_id: int):
+    query = select(tbl_300_awaiting_user_input).where(tbl_300_awaiting_user_input.chat_id == chat_id, tbl_300_awaiting_user_input.status == "AWAITING")
+    result = await db.execute(query)
+    awaiting_input = result.scalar_one_or_none()
+    if awaiting_input:
+        awaiting_input.status = "PROCESSED"
+        await db.commit()

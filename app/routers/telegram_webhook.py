@@ -6,7 +6,7 @@ from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id
+from app.database_operations import add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting
 from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
@@ -151,6 +151,18 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
 
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
+
+        if payload_obj.message.text == "/getvoice":
+            user_id = payload_obj.message.from_.get('id')
+            chat_id = payload_obj.message.chat['id']
+
+            # Mark the chat as awaiting voice input in the database
+            await mark_chat_as_awaiting(db=db, channel="TELEGRAM",chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
+
+            # Send a prompt to the user asking for the voice input
+            await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db))
+
+            return {"status": "Awaiting voice input"}
 
         # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
         await process_message_type(payload_obj.message, chat_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
