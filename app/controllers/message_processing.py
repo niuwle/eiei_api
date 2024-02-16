@@ -4,12 +4,13 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database_operations import get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
 from app.controllers.ai_communication import get_chat_completion
-from app.controllers.telegram_integration import send_telegram_message, send_audio_message, send_voice_note
+from app.controllers.telegram_integration import send_telegram_message, send_audio_message, send_voice_note, send_photo_message
 from app.models.message import tbl_msg
 from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
 from app.schemas import TextMessage
 from app.utils.generate_audio import generate_audio_from_text, generate_audio_with_monsterapi
+from app.utils.generate_photo import generate_photo_from_text
 import asyncio
 import regex as re
 
@@ -78,7 +79,23 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
                 # Clear the awaiting status
                 await clear_awaiting_status(db=db, chat_id=chat_id)
             else:
+                # If photo generation failed, inform the user
+                await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate the audio. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
                 logger.error("Failed to generate audio")
+
+        elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
+            # Check if the user is awaiting photo generation
+            logger.debug("User is awaiting photo generation")
+            photo_url = await generate_photo_from_text(text=response_text, db=db)
+            if photo_url:
+                # Send the generated photo URL to the user
+                await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=await get_bot_token(messages[0].bot_id, db))
+                # Clear the awaiting status for photo
+                await clear_awaiting_status(db=db, chat_id=chat_id)
+            else:
+                # If photo generation failed, inform the user
+                await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate a photo from the description provided. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
+
         else:
                 
             # Apply humanization to the response text

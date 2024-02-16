@@ -164,6 +164,19 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             return {"status": "Awaiting voice input"}
 
+
+        if payload_obj.message.text == "/getphoto":
+            user_id = payload_obj.message.from_.get('id')
+            chat_id = payload_obj.message.chat['id']
+
+            # Mark the chat as awaiting photo input in the database
+            await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="PHOTO")
+
+            # Send a prompt to the user asking for the text input to generate the photo
+            await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db))
+
+            return {"status": "Awaiting text input for photo generation"}
+
         # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
         await process_message_type(payload_obj.message, chat_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
 

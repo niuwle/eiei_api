@@ -128,3 +128,29 @@ async def send_voice_note(chat_id: int, audio_file_path: str, bot_token: str) ->
             logger.error(f"Failed to delete voice note file: {audio_file_path}. Error: {e}")
 
     return success
+
+async def send_photo_message(chat_id: int, photo_url: str, bot_token: str) -> bool:
+    """
+    Sends a photo message to a user in Telegram using the photo's URL.
+
+    Parameters:
+    - chat_id (int): The chat ID to send the photo message to.
+    - photo_url (str): The URL of the photo to be sent.
+    - bot_token (str): The Telegram bot token.
+
+    Returns:
+    - bool: True if the message was sent successfully, False otherwise.
+    """
+    url = f'{TELEGRAM_API_URL}{bot_token}/sendPhoto'
+    payload = {"chat_id": chat_id, "photo": photo_url}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, data=payload)
+        response.raise_for_status()
+        return True
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error sending photo message: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error in send_photo_message: {str(e)}")
+    return False
