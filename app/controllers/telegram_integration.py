@@ -4,10 +4,79 @@ import logging
 from app.config import TELEGRAM_API_URL
 import asyncio
 import os 
+from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
-async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> bool:
+async def update_telegram_message(chat_id: int, message_id: int, new_text: str, bot_token: str) -> bool:
+    """
+    Updates the content of a previously sent message in Telegram.
+
+    Parameters:
+    - chat_id (int): The chat ID where the message was sent.
+    - message_id (int): The ID of the message to update.
+    - new_text (str): The new text content for the message.
+    - bot_token (str): The Telegram bot token.
+
+    Returns:
+    - bool: True if the message content was updated successfully, False otherwise.
+    """
+    url = f'{TELEGRAM_API_URL}{bot_token}/editMessageText'
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": new_text
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            return True
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error updating message content: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error in update_message_content: {str(e)}")
+    return False
+
+
+async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> Tuple[bool, int]:
+    """
+    Sends a text message to a user in Telegram.
+
+    Parameters:
+    - chat_id (int): The chat ID to send the message to.
+    - text (str): The text of the message to be sent.
+    - bot_token (str): The Telegram bot token.
+
+    Returns:
+    - Tuple[bool, int]: A tuple containing a boolean indicating if the message was sent successfully and the message ID.
+    """
+    # Send 'typing' action
+    await send_typing_action(chat_id, bot_token)
+
+    # Calculate delay based on the length of the message
+    typing_delay = calculate_typing_delay(text)
+    await asyncio.sleep(typing_delay)
+
+    # Send the actual message
+    url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
+    payload = {"chat_id": chat_id, "text": text}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            message_id = response.json().get('result', {}).get('message_id', 0)
+            return True, message_id
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error sending Telegram message: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error in send_telegram_message: {str(e)}")
+    return False, 0
+
+
+async def send_telegram_message_OLD(chat_id: int, text: str, bot_token: str) -> bool:
     # Send 'typing' action
     await send_typing_action(chat_id, bot_token)
 

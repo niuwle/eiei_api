@@ -6,13 +6,14 @@ from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting
+from app.database_operations import (
+    add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting
+)
 from app.controllers.telegram_integration import send_telegram_message
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
 from app.utils.process_photo import caption_photo
 from app.utils.error_handler import handle_exception
-
 logger = logging.getLogger(__name__)
 
 class Voice(BaseModel):

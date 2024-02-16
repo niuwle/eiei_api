@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database_operations import get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
 from app.controllers.ai_communication import get_chat_completion
-from app.controllers.telegram_integration import send_telegram_message, send_audio_message, send_voice_note, send_photo_message
+from app.controllers.telegram_integration import update_telegram_message, send_telegram_message, send_audio_message, send_voice_note, send_photo_message
 from app.models.message import tbl_msg
 from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
@@ -67,43 +67,71 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
 
     if response_text:
 
+        bot_token = await get_bot_token(messages[0].bot_id, db)
+
         logger.debug(f"chat_id1234: {chat_id}") # Debug statement
-                # Check if the user is awaiting audio generation
+        # Check if the user is awaiting audio generation
         if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
-            logger.debug(f"user is awaiting audio generation") # Debug statement
-            # Generate audio from the response text
-            audio_file_path = await generate_audio_with_monsterapi(text=response_text)
-            if audio_file_path:
-                # Send the audio file to the user
-                await send_voice_note(chat_id=chat_id, audio_file_path=audio_file_path, bot_token=await get_bot_token(messages[0].bot_id, db))
-                # Clear the awaiting status
+            # Send "Generating" message and capture its ID
+            success, generating_message_id = await send_telegram_message(chat_id=chat_id, text="Generating audio, please wait.", bot_token=bot_token)
+            
+            if success:
+                logger.debug(f"user is awaiting audio generation")  # Debug statement
+                # Clear the awaiting status, as we start processing
                 await clear_awaiting_status(db=db, chat_id=chat_id)
-            else:
-                # If photo generation failed, inform the user
-                await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate the audio. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
-                logger.error("Failed to generate audio")          
-                await clear_awaiting_status(db=db, chat_id=chat_id)
+
+                # Start audio generation in a background task
+                audio_generation_task = asyncio.create_task(
+                    generate_audio_with_monsterapi(text=response_text)
+                )
+
+                # Simulate "animation" by updating the message periodically
+                try:
+                    while not audio_generation_task.done():
+                        for i in range(4):
+                            if audio_generation_task.done():
+                                break  # Exit if audio generation completes
+                            new_text = f"Generating audio, please wait{'.' * (i % 4)}"
+                            await update_telegram_message(chat_id, generating_message_id, new_text, bot_token)
+                            await asyncio.sleep(1)  # Short delay before the next update
+                except asyncio.CancelledError:
+                    # Handle the case where the task might be cancelled
+                    pass
+
+                # Retrieve the result of audio generation
+                audio_file_path = await audio_generation_task
+                
+                if audio_file_path:
+                    # Send the audio file to the user
+                    await send_voice_note(chat_id=chat_id, audio_file_path=audio_file_path, bot_token=bot_token)
+                    # Update to inform the user that the audio was generated successfully
+                    await update_telegram_message(chat_id, generating_message_id, "Audio generated successfully.", bot_token)
+                else:
+                    # If audio generation failed, inform the user
+                    final_message = "Sorry, I couldn't generate the audio. Please try again."
+                    await update_telegram_message(chat_id, generating_message_id, final_message, bot_token)
+                    logger.error("Failed to generate audio")
+
 
         elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
             # Check if the user is awaiting photo generation
             logger.debug("User is awaiting photo generation")
+            # Clear the awaiting status for photo
+            await clear_awaiting_status(db=db, chat_id=chat_id)
             photo_url = await generate_photo_from_text(text=response_text, db=db)
             if photo_url:
                 # Send the generated photo URL to the user
-                await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=await get_bot_token(messages[0].bot_id, db))
-                # Clear the awaiting status for photo
-                await clear_awaiting_status(db=db, chat_id=chat_id)
+                await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=bot_token)
             else:
                 # If photo generation failed, inform the user
                 await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate a photo from the description provided. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
-                # Clear the awaiting status for photo
-                await clear_awaiting_status(db=db, chat_id=chat_id)
+
 
         else:
                 
             # Apply humanization to the response text
             humanized_response = humanize_response(response_text)
-            bot_token = await get_bot_token(messages[0].bot_id, db)
+            
 
             # Loop through each chunk and send it as a separate message
             for chunk in humanized_response:
