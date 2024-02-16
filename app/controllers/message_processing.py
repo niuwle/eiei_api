@@ -81,7 +81,8 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
             else:
                 # If photo generation failed, inform the user
                 await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate the audio. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
-                logger.error("Failed to generate audio")
+                logger.error("Failed to generate audio")          
+                await clear_awaiting_status(db=db, chat_id=chat_id)
 
         elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
             # Check if the user is awaiting photo generation
@@ -95,6 +96,8 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
             else:
                 # If photo generation failed, inform the user
                 await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate a photo from the description provided. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
+                # Clear the awaiting status for photo
+                await clear_awaiting_status(db=db, chat_id=chat_id)
 
         else:
                 
