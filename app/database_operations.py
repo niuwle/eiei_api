@@ -1,3 +1,4 @@
+# app/database_operations.py
 from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from app.models.telegram_config import TelegramConfig
@@ -114,7 +115,6 @@ async def reset_messages_by_chat_id(db: AsyncSession, chat_id: int) -> None:
     except SQLAlchemyError as e:
         logger.error(f"Database error in reset_messages_by_chat_id: {e}")
         raise
-        
 async def mark_chat_as_awaiting(db: AsyncSession, channel: str, chat_id: int, bot_id: int, user_id: int, awaiting_type: str, status: str = "AWAITING"):
     # First, check if a matching record already exists
     existing_query = select(tbl_300_awaiting_user_input).where(
