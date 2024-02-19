@@ -189,7 +189,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 await send_generate_options(chat_id, bot_token)
                 return {"status": "Generate command processed"}
 
-        if payload_obj.message.text == "/getvoice":
+        if payload_obj.message and payload_obj.message.text == "/getvoice":
             user_id = payload_obj.message.from_.get('id')
             chat_id = payload_obj.message.chat['id']
 
@@ -202,7 +202,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             return {"status": "Awaiting voice input"}
 
 
-        if payload_obj.message.text == "/getphoto":
+        if payload_obj.message and payload_obj.message.text == "/getphoto":
             user_id = payload_obj.message.from_.get('id')
             chat_id = payload_obj.message.chat['id']
 
@@ -215,7 +215,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             return {"status": "Awaiting text input for photo generation"}
 
 
-        if payload_obj.message.text == "/payment":
+        if payload_obj.message and payload_obj.message.text == "/payment":
             # Code to generate invoice and send it to the user
             prices = [{"label": "Service Fee", "amount": 5000}]
             start_parameter = "payment-example"
