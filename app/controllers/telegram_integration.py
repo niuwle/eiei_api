@@ -1,10 +1,11 @@
 # ./app/controllers/telegram_integration.py
 import httpx
 import logging
-from app.config import TELEGRAM_API_URL
+from app.config import TELEGRAM_API_URL, STRIPE_API_KEY
+
 import asyncio
 import os 
-from typing import Tuple
+from typing import Tuple, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -223,3 +224,90 @@ async def send_photo_message(chat_id: int, photo_url: str, bot_token: str) -> bo
     except Exception as e:
         logger.error(f"Unexpected error in send_photo_message: {str(e)}")
     return False
+
+async def send_generate_options(chat_id: int, bot_token: str):
+    
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "1 photo", "callback_data": "generate_photo"}],
+            [{"text": "2 audio", "callback_data": "generate_audio"}]
+        ]
+    }
+    text = "CHOOSE WHAT YOU WANT:"
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    url = f"{TELEGRAM_API_URL}{bot_token}/sendMessage"
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json=payload)
+        
+
+async def answer_pre_checkout_query(pre_checkout_query_id: str, ok: bool, bot_token: str, error_message: str = None):
+    url = f'{TELEGRAM_API_URL}{bot_token}/answerPreCheckoutQuery'
+    payload = {
+        "pre_checkout_query_id": pre_checkout_query_id,
+        "ok": ok,
+        "error_message": error_message
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        if response.status_code != 200:
+            raise Exception(f"Failed to send PreCheckoutQuery response: {response.text}")
+
+async def send_invoice(
+    chat_id: int, title: str, description: str, payload: str,
+    currency: str, prices, bot_token: str, start_parameter: str = '', provider_data: str = '',  
+    photo_url: str = '', photo_size: int =  0, photo_width: int =  0, photo_height: int =  0,  
+    need_name: bool = False, need_phone_number: bool = False, need_email: bool = False,  
+    need_shipping_address: bool = False, send_phone_number_to_provider: bool = False,  
+    send_email_to_provider: bool = False, is_flexible: bool = False,  
+    disable_notification: bool = False, protect_content: bool = False,  
+    reply_markup: Optional[str] = None  # Expect a serialized JSON string or None
+) -> Tuple[bool, int]:
+    """
+    Sends an invoice to a user in Telegram with optional parameters included.
+    """
+    url = f'{TELEGRAM_API_URL}{bot_token}/sendInvoice'
+    payload = {
+        "chat_id": chat_id,
+        "title": title,
+        "description": description,
+        "payload": payload,
+        "provider_token": STRIPE_API_KEY,
+        "currency": currency,
+        "prices": prices,
+        "start_parameter": start_parameter,
+        "provider_data": provider_data,
+        "photo_url": photo_url,
+        "photo_size": photo_size,
+        "photo_width": photo_width,
+        "photo_height": photo_height,
+        "need_name": need_name,
+        "need_phone_number": need_phone_number,
+        "need_email": need_email,
+        "need_shipping_address": need_shipping_address,
+        "send_phone_number_to_provider": send_phone_number_to_provider,
+        "send_email_to_provider": send_email_to_provider,
+        "is_flexible": is_flexible,
+        "disable_notification": disable_notification,
+        "protect_content": protect_content
+    }
+
+    # Add reply_markup to the payload only if it's not None
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload)
+            response.raise_for_status()
+            message_id = response.json().get('result', {}).get('message_id',  0)
+            return True, message_id
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error sending invoice: {e}")
+        # Additional logging for debugging
+        logger.error(f"Request payload: {payload}")
+        logger.error(f"Response content: {response.content}")
+        return False,  0
+    except Exception as e:
+        logger.error(f"Unexpected error in send_invoice: {str(e)}")
+        return False,  0

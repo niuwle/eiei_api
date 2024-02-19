@@ -2,20 +2,26 @@ import logging
 import os
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
     add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting
 )
-from app.controllers.telegram_integration import send_telegram_message
+from app.controllers.telegram_integration import send_telegram_message, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
 from app.utils.process_photo import caption_photo
 from app.utils.error_handler import handle_exception
 logger = logging.getLogger(__name__)
 
+
+class CallbackQuery(BaseModel):
+    id: str
+    from_: dict = Field(None, alias='from')
+    data: str
+    
 class Voice(BaseModel):
     duration: int
     mime_type: str
@@ -37,20 +43,45 @@ class Document(BaseModel):
     mime_type: str
     thumb: PhotoSize = None
 
+class SuccessfulPayment(BaseModel):
+    currency: str
+    total_amount: int
+    invoice_payload: str
+    shipping_option_id: Optional[str] = None
+    order_info: Optional[dict] = None
+    telegram_payment_charge_id: str
+    provider_payment_charge_id: str
+
 class Message(BaseModel):
     message_id: int
     from_: dict = Field(None, alias='from')
     chat: dict
     date: int
-    text: str = None
-    voice: Voice = None
-    photo: List[PhotoSize] = None
-    document: Document = None
-    caption: str = None
+    text: Optional[str] = None
+    voice: Optional[Voice] = None
+    photo: Optional[List[PhotoSize]] = None
+    document: Optional[Document] = None
+    caption: Optional[str] = None
+    successful_payment: Optional[SuccessfulPayment] = None
 
+
+class PreCheckoutQuery(BaseModel):
+    id: str
+    from_: dict = Field(..., alias='from')
+    currency: str
+    total_amount: int
+    invoice_payload: str
+    shipping_option_id: Optional[str] = None
+    order_info: Optional[dict] = None
+    
 class TelegramWebhookPayload(BaseModel):
     update_id: int
-    message: Message
+    message: Optional[Message] = None
+    callback_query: Optional[CallbackQuery] = None
+    pre_checkout_query: Optional[PreCheckoutQuery] = None
+    # Ensure SuccessfulPayment is defined in your models
+    successful_payment: Optional[SuccessfulPayment] = None
+    
 
 router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
@@ -122,36 +153,39 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")
     try:
-        payload = await request.json() # Define payload here
-        # Log the raw JSON payload
+        payload = await request.json()
         logger.debug('Raw JSON Payload: %s', payload)
 
-        update_id = payload.get('update_id')
-
-        #Maintain the following code will activate in PROD, DISABLED FOR TESTING POURPOSES NOW
-        # Check if update_id has already been processed
-        #existing_msg_query = select(tbl_msg).where(tbl_msg.update_id == update_id)
-        #result = await db.execute(existing_msg_query)
-        #if result.scalars().first():
-        #    logger.info(f"Update ID {update_id} has already been processed. Skipping.")
-        #    return {"status": "Update already processed"}
-        
-
-        payload_obj = TelegramWebhookPayload(**payload) # Parse JSON to Pydantic model
-        # Log the parsed payload
+        payload_obj = TelegramWebhookPayload(**payload)  # Parse JSON to Pydantic model
         logger.debug('Parsed Payload: %s', payload_obj.dict())
 
-        chat_id = payload_obj.message.chat['id']
+        bot_id=await get_bot_id_by_short_name(bot_short_name, db)
+        
+        bot_token=await get_bot_token(bot_id, db)
+        
+        # Handling callback_query for inline keyboard responses
+        if payload.get('callback_query'):
+            callback_query = payload['callback_query']
+            chat_id = callback_query['message']['chat']['id']
+            data = callback_query['data']
 
-        # Handle /reset command specifically
-        if payload_obj.message.text == "/reset":
-            # Call reset_messages_by_chat_id for the current chat_id
-            await reset_messages_by_chat_id(db, chat_id)
-            await send_telegram_message(chat_id, "All messages have been reset.", await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db))
-            return {"status": "Messages reset successfully"}
+            # Depending on the callback data, trigger the corresponding function
+            if data == "generate_photo":
+                await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=callback_query['from']['id'], awaiting_type="PHOTO")
+                await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=bot_token)
+            elif data == "generate_audio":
+                await mark_chat_as_awaiting(db=db, channel="TELEGRAM",chat_id=chat_id, bot_id=bot_id, user_id=callback_query['from']['id'], awaiting_type="AUDIO")
+                await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
+            
+            return {"status": "Callback query processed successfully"}
 
+        # Ensure we're dealing with message updates
+        if payload_obj.message:
+            chat_id = payload_obj.message.chat['id']
 
-        bot_id = await get_bot_id_by_short_name(bot_short_name, db)
+            if payload_obj.message.text == "/generate":
+                await send_generate_options(chat_id, bot_token)
+                return {"status": "Generate command processed"}
 
         if payload_obj.message.text == "/getvoice":
             user_id = payload_obj.message.from_.get('id')
@@ -161,7 +195,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             await mark_chat_as_awaiting(db=db, channel="TELEGRAM",chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
 
             # Send a prompt to the user asking for the voice input
-            await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db))
+            await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
 
             return {"status": "Awaiting voice input"}
 
@@ -177,6 +211,66 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db))
 
             return {"status": "Awaiting text input for photo generation"}
+
+
+        if payload_obj.message.text == "/payment":
+            # Code to generate invoice and send it to the user
+            prices = [{"label": "Service Fee", "amount": 5000}]
+            start_parameter = "payment-example"
+            currency = "USD"
+            title = "Product Title"
+            description = "Product Description"
+            payload = "Custom-Payload"
+            
+            await send_invoice(
+                chat_id=chat_id,
+                title=title,
+                description=description,
+                payload=payload,
+                currency=currency,
+                prices=prices,
+                bot_token=bot_token,
+                start_parameter=start_parameter,  # This can be '' if you don't need a specific start parameter
+                provider_data='',  # Adjust as necessary, or remove if not used
+                photo_url='',  # Adjust as necessary, or remove if not used
+                photo_size=0,  # Adjust as necessary, or remove if not used
+                photo_width=0,  # Adjust as necessary, or remove if not used
+                photo_height=0,  # Adjust as necessary, or remove if not used
+                need_name=False,  # Adjust as necessary
+                need_phone_number=False,  # Adjust as necessary
+                need_email=False,  # Adjust as necessary
+                need_shipping_address=False,  # Adjust as necessary
+                send_phone_number_to_provider=False,  # Adjust as necessary
+                send_email_to_provider=False,  # Adjust as necessary
+                is_flexible=False,  # Adjust as necessary
+                disable_notification=False,  # Adjust as necessary
+                protect_content=False,  # Adjust as necessary
+                reply_markup=None  # Adjust as necessary, make sure it's a serialized JSON string or None
+            )
+
+            return {"status": "generated invoice"}
+
+        if payload_obj.pre_checkout_query:
+            pre_checkout_query_id = payload_obj.pre_checkout_query.id
+            try:
+                await answer_pre_checkout_query(pre_checkout_query_id, ok=True, bot_token=bot_token)
+                logger.info(f"PreCheckoutQuery {pre_checkout_query_id} answered successfully.")
+            except Exception as e:
+                logger.error(f"Failed to answer PreCheckoutQuery {pre_checkout_query_id}: {e}")
+
+
+            return {"status": "PreCheckoutQuery"}
+
+        if payload_obj.message and payload_obj.message.successful_payment:
+            successful_payment = payload_obj.message.successful_payment
+            try:
+                confirmation_text = "Thank you for your payment!"
+                await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
+                logger.info(f"Payment confirmed for chat_id {payload_obj.message.chat['id']}.")
+            except Exception as e:
+                logger.error(f"Failed to process successful payment for chat_id {payload_obj.message.chat['id']}: {e}")
+
+            return {"status": "Payment confirmed "}
 
         # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
         await process_message_type(payload_obj.message, chat_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
