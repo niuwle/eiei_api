@@ -162,22 +162,24 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         bot_id=await get_bot_id_by_short_name(bot_short_name, db)
         
         bot_token=await get_bot_token(bot_id, db)
-        
-        # Handling callback_query for inline keyboard responses
-        if payload.get('callback_query'):
-            callback_query = payload['callback_query']
-            chat_id = callback_query['message']['chat']['id']
-            data = callback_query['data']
+      # Handling callback_query for inline keyboard responses
+        if payload_obj.callback_query:
+            # Directly access fields from the parsed Pydantic model
+            callback_query = payload_obj.callback_query
+            chat_id = callback_query.message.chat['id']
+            data = callback_query.data
+            user_id = callback_query.from_.get('id')  # Note the use of from_ here because 'from' is a reserved keyword in Python
 
             # Depending on the callback data, trigger the corresponding function
             if data == "generate_photo":
-                await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=callback_query['from']['id'], awaiting_type="PHOTO")
+                await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="PHOTO")
                 await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=bot_token)
             elif data == "generate_audio":
-                await mark_chat_as_awaiting(db=db, channel="TELEGRAM",chat_id=chat_id, bot_id=bot_id, user_id=callback_query['from']['id'], awaiting_type="AUDIO")
+                await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
                 await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
             
             return {"status": "Callback query processed successfully"}
+
 
         # Ensure we're dealing with message updates
         if payload_obj.message:
