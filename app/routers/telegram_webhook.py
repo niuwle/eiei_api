@@ -250,6 +250,9 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             return {"status": "generated invoice"}
 
+        # Before the if statement
+        logger.debug(f"PreCheckoutQuery data: {payload_obj.pre_checkout_query}")
+
         if payload_obj.pre_checkout_query:
             pre_checkout_query_id = payload_obj.pre_checkout_query.id
             try:
@@ -272,6 +275,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             return {"status": "Payment confirmed "}
 
+
+        logger.info(f"Incoming payload is not a special case, procesing with handling of chat messages")
         # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
         await process_message_type(payload_obj.message, chat_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
 
