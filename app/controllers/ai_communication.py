@@ -4,22 +4,29 @@ import httpx
 import logging
 from app.models.message import tbl_msg
 from typing import Optional
-from app.config import OPENROUTER_TOKEN, OPENROUTER_MODEL, OPENROUTER_URL, ASSISTANT_PROMPT
+from app.config import OPENROUTER_TOKEN, OPENROUTER_MODEL, OPENROUTER_URL
 from httpx import HTTPError
 from sqlalchemy.future import select
+from app.database_operations import get_bot_assistant_prompt 
 
 # Create a logger
 logger = logging.getLogger(__name__)
 
 async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Optional[str]:
     try:
+        # Fetch the assistant prompt for the specific bot_id
+        assistant_prompt = await get_bot_assistant_prompt(bot_id, db)
+        if not assistant_prompt:
+            logger.error(f"No assistant prompt found for bot_id {bot_id}. Using default prompt.")
+            return None
+
         messages = await db.execute(select(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id, tbl_msg.is_processed != 'S', tbl_msg.is_reset != 'Y').order_by(tbl_msg.message_date))
         messages = messages.scalars().all()
         logger.info(f"Retrieved {len(messages)} messages for chat_id {chat_id} and bot_id {bot_id}")
         # Calculate initial payload size
-        payload_size = len(str([{"role": "system", "content": ASSISTANT_PROMPT}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]))
+        payload_size = len(str([{"role": "system", "content": assistant_prompt}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]))
 
-        # Remove oldest messages if payload size exceeds 8k  characters
+        # Remove oldest messages if payload size exceeds 8k characters
         while payload_size > 8 * 1024:
             oldest_message = messages.pop(0)
             payload_size -= len(str({"role": oldest_message.role.lower(), "content": oldest_message.content_text}))
@@ -27,7 +34,7 @@ async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Op
         payload = {
             "model": OPENROUTER_MODEL,
             "max_tokens": 4024,
-            "messages": [{"role": "system", "content": ASSISTANT_PROMPT}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]
+            "messages": [{"role": "system", "content": assistant_prompt}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]
         }
 
         logger.debug(f"Sending JSON payload to OpenRouter: {payload}")  # Log the sent JSON payload

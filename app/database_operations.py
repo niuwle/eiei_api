@@ -158,3 +158,22 @@ async def clear_awaiting_status(db: AsyncSession, chat_id: int):
     if awaiting_input:
         awaiting_input.status = "PROCESSED"
         await db.commit()
+
+
+async def get_bot_assistant_prompt(bot_id: int, db: AsyncSession) -> str:
+    try:
+        # Select the bot_assistant_prompt column from the tbl_100_telegram_config table where the pk_bot matches the given bot_id
+        query = select(TelegramConfig.bot_assistant_prompt).where(TelegramConfig.pk_bot == bot_id)
+        result = await db.execute(query)
+        # Fetch the first result's scalar value, which should be the bot_assistant_prompt for the given bot_id
+        bot_assistant_prompt = result.scalar_one_or_none()
+        
+        if bot_assistant_prompt:
+            logger.info(f"Retrieved bot_assistant_prompt for bot_id {bot_id}")
+        else:
+            logger.warning(f"No bot_assistant_prompt found for bot_id {bot_id}")
+        
+        return bot_assistant_prompt
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_bot_assistant_prompt: {e}")
+        return ''
