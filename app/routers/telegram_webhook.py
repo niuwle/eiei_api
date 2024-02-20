@@ -17,11 +17,8 @@ from app.utils.error_handler import handle_exception
 logger = logging.getLogger(__name__)
 
 
-class CallbackQuery(BaseModel):
-    id: str
-    from_: dict = Field(None, alias='from')
-    data: str
-    
+
+
 class Voice(BaseModel):
     duration: int
     mime_type: str
@@ -64,6 +61,11 @@ class Message(BaseModel):
     caption: Optional[str] = None
     successful_payment: Optional[SuccessfulPayment] = None
 
+class CallbackQuery(BaseModel):
+    id: str
+    from_: dict = Field(None, alias='from')
+    message: Optional[Message] = None  # Ensure Message is defined as per your existing model
+    data: str
 
 class PreCheckoutQuery(BaseModel):
     id: str
@@ -163,12 +165,10 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         
         bot_token=await get_bot_token(bot_id, db)
       # Handling callback_query for inline keyboard responses
-        if payload_obj.callback_query:
-            # Directly access fields from the parsed Pydantic model
-            callback_query = payload_obj.callback_query
-            chat_id = callback_query.message.chat['id']
-            data = callback_query.data
-            user_id = callback_query.from_.get('id')  # Note the use of from_ here because 'from' is a reserved keyword in Python
+        if payload_obj.callback_query and payload_obj.callback_query.message:
+            chat_id = payload_obj.callback_query.message.chat['id']
+            data = payload_obj.callback_query.data
+            user_id = payload_obj.callback_query.from_.get('id')
 
             # Depending on the callback data, trigger the corresponding function
             if data == "generate_photo":
