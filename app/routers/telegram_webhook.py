@@ -266,8 +266,50 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             return {"status": "PreCheckoutQuery"}
 
+
+        # Inside your successful payment handling block
         if payload_obj.message and payload_obj.message.successful_payment:
             successful_payment = payload_obj.message.successful_payment
+            payment_info = {
+                "update_id": payload.update_id,
+                "message_id": payload_obj.message.message_id,
+                "user_id": payload_obj.message.from_.get('id'),
+                "user_is_bot": payload_obj.message.from_.get('is_bot', False),
+                "user_first_name": payload_obj.message.from_.get('first_name', ''),
+                "user_language_code": payload_obj.message.from_.get('language_code', ''),
+                "chat_id": payload_obj.message.chat.get('id'),
+                "chat_first_name": payload_obj.message.chat.get('first_name', ''),
+                "chat_type": payload_obj.message.chat.get('type', ''),
+                "payment_date": datetime.utcfromtimestamp(payload_obj.message.date),
+                "currency": successful_payment.currency,
+                "total_amount": successful_payment.total_amount / 100.0, # Assuming total_amount is in cents
+                "invoice_payload": successful_payment.invoice_payload,
+                "telegram_payment_charge_id": successful_payment.telegram_payment_charge_id,
+                "provider_payment_charge_id": successful_payment.provider_payment_charge_id
+            }
+            # Log the successful transaction
+            try:
+                pk_payment = await add_payment_details(db, payment_info)
+            except Exception as e:
+                logger.error(f"Failed Log the successful transaction: {e}")
+                
+
+            user_credit_info = {
+                "channel": "TELEGRAM",  # Or however you determine the channel
+                "pk_bot": bot_id,  # Assuming you've retrieved this earlier
+                "user_id": payload_obj.message.from_.get('id'),
+                "chat_id": payload_obj.message.chat.get('id'),
+                "credits": 10,  # The number of credits to add
+                "transaction_type": "credit",  # Indicating this is a credit transaction
+                "transaction_date": datetime.utcfromtimestamp(payload_obj.message.date),  # Timestamp of the transaction
+                "pk_payment": pk_payment  # Linking this credit update to the payment record
+            }
+            # Call the function to update user credits
+            try:
+                await update_user_credits(db, user_credit_info)
+            except Exception as e:
+                logger.error(f"Failed to update user credits: {e}")
+
             try:
                 confirmation_text = "Thank you for your payment!"
                 await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)

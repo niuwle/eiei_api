@@ -2,6 +2,8 @@ from sqlalchemy.orm import Session
 from app.models.message import tbl_msg
 from app.models.telegram_config import TelegramConfig
 from app.models.awaiting_user_input import tbl_300_awaiting_user_input
+from app.models.payments import Payment
+from app.models.user_credits import UserCredit
 from datetime import datetime
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -177,3 +179,16 @@ async def get_bot_assistant_prompt(bot_id: int, db: AsyncSession) -> str:
     except SQLAlchemyError as e:
         logger.error(f"Database error in get_bot_assistant_prompt: {e}")
         return ''
+
+
+async def add_payment_details(db: AsyncSession, payment_info: dict) -> int:
+    new_payment = Payment(**payment_info)
+    db.add(new_payment)
+    await db.commit()
+    await db.refresh(new_payment)
+    return new_payment.pk_payment
+
+async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
+    new_credit = UserCredit(**user_credit_info)
+    db.add(new_credit)
+    await db.commit()
