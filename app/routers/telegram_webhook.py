@@ -133,7 +133,7 @@ async def process_message_type(message_data, chat_id, message_id, bot_id, bot_sh
         task_params = {'background_tasks': background_tasks, 'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for transcribe_audio
 
     if message_type:
-        # Change payload.update_id to payload['update_id']
+        
         messages_info = [
             {'message_data': TextMessage(chat_id=chat_id, user_id=0, bot_id=bot_id, message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
             {'message_data': TextMessage(chat_id=chat_id, user_id=0, bot_id=bot_id, message_text="[AI PLACEHOLDER]", message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
@@ -271,7 +271,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         if payload_obj.message and payload_obj.message.successful_payment:
             successful_payment = payload_obj.message.successful_payment
             payment_info = {
-                "update_id": payload.update_id,
+                "update_id": payload_obj.update_id,
                 "message_id": payload_obj.message.message_id,
                 "user_id": payload_obj.message.from_.get('id'),
                 "user_is_bot": payload_obj.message.from_.get('is_bot', False),

@@ -186,9 +186,11 @@ async def add_payment_details(db: AsyncSession, payment_info: dict) -> int:
     db.add(new_payment)
     await db.commit()
     await db.refresh(new_payment)
+    logger.info(f"add_payment_details {new_payment.pk_payment}")
     return new_payment.pk_payment
 
 async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
     new_credit = UserCredit(**user_credit_info)
     db.add(new_credit)
     await db.commit()
+    logger.info(f"update_user_credits suces")
