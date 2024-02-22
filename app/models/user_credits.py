@@ -19,7 +19,7 @@ class UserCredit(Base):
     credits = Column(Float)
     transaction_type = Column(String(100))
     transaction_date = Column(DateTime, default=datetime.utcnow)
-    pk_payment = Column(Integer, ForeignKey('tbl_300_payments.pk_payment'))
+    pk_payment = Column(Integer, ForeignKey('tbl_400_payments.pk_payment'))
     payment = relationship("Payment", back_populates="user_credits")
 
 Payment.user_credits = relationship("UserCredit", order_by=UserCredit.pk_credit, back_populates="payment")
