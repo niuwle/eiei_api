@@ -325,9 +325,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 logger.error(f"Failed to update user credits: {e}")
 
             try:
-                confirmation_text = "Thank you for your payment!"
-                await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
                 # After updating user credits successfully
+                confirmation_text = "Thank you for your payment!"
                 total_credits = await get_latest_total_credits(db, user_id=payload_obj.message.from_.get('id'), pk_bot=bot_id)
                 confirmation_text += f"\nYou now have {total_credits} total credits."
                 await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
