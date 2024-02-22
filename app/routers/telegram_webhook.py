@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
-    add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting
+    add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, add_payment_details, update_user_credits
 )
 from app.controllers.telegram_integration import send_telegram_message, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
