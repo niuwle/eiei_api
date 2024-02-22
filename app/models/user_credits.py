@@ -3,10 +3,9 @@
 from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from .payments import Payment  
+from app.models.payments import Payment
 from datetime import datetime
-
-Base = declarative_base()
+from . import Base
 
 class UserCredit(Base):
     __tablename__ = 'tbl_450_user_credits'
@@ -19,7 +18,6 @@ class UserCredit(Base):
     credits = Column(Float)
     transaction_type = Column(String(100))
     transaction_date = Column(DateTime, default=datetime.utcnow)
-    pk_payment = Column(Integer, ForeignKey('tbl_400_payments.pk_payment'))
-    payment = relationship("Payment", back_populates="user_credits")
-
-Payment.user_credits = relationship("UserCredit", order_by=UserCredit.pk_credit, back_populates="payment")
+    pk_payment = Column(BigInteger)
+    total_credits = Column(BigInteger)
+    

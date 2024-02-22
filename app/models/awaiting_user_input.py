@@ -1,8 +1,7 @@
 #app/models/awaiting_user_input.py
 from sqlalchemy import Column, BigInteger, String, Integer
 from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
+from . import Base
 
 class tbl_300_awaiting_user_input(Base):
     __tablename__ = 'tbl_300_awaiting_user_input'

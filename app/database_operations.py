@@ -189,8 +189,37 @@ async def add_payment_details(db: AsyncSession, payment_info: dict) -> int:
     logger.info(f"add_payment_details {new_payment.pk_payment}")
     return new_payment.pk_payment
 
+async def get_latest_total_credits(db: AsyncSession, user_id: int, pk_bot: int) -> float:
+    try:
+        latest_credit = await db.execute(
+            select(UserCredit.total_credits)
+            .where(UserCredit.user_id == user_id, UserCredit.pk_bot == pk_bot)
+            .order_by(UserCredit.pk_credit.desc())
+            .limit(1)
+        )
+        latest_credit_value = latest_credit.scalar_one_or_none()
+        return latest_credit_value if latest_credit_value is not None else 0.0
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_latest_total_credits: {e}")
+        return 0.0
+
 async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
+    # Extract user_id and pk_bot from user_credit_info for the lookup
+    user_id = user_credit_info['user_id']
+    pk_bot = user_credit_info['pk_bot']
+    credits_to_add = user_credit_info['credits']  # This could be positive or negative
+
+    # Get the latest total_credits value
+    latest_total_credits = await get_latest_total_credits(db, user_id, pk_bot)
+
+    # Update the total_credits value with the new transaction
+    updated_total_credits = latest_total_credits + credits_to_add
+
+    # Add the updated total_credits to user_credit_info
+    user_credit_info['total_credits'] = updated_total_credits
+
+    # Proceed to insert the new credit record with updated total_credits
     new_credit = UserCredit(**user_credit_info)
     db.add(new_credit)
     await db.commit()
-    logger.info(f"update_user_credits suces")
+    logger.info("User credits updated successfully.")

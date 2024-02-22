@@ -2,8 +2,7 @@
 from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
-
-Base = declarative_base()
+from . import Base
 
 class Payment(Base):
     __tablename__ = 'tbl_400_payments'

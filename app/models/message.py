@@ -1,8 +1,7 @@
 #app/models/message.py
 from sqlalchemy import Column, Integer, BigInteger, String, DateTime, func
 from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
+from . import Base
 
 class tbl_msg(Base):
     __tablename__ = 'tbl_200_messages'

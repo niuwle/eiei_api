@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
-    add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, add_payment_details, update_user_credits
+    get_latest_total_credits, add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, add_payment_details, update_user_credits
 )
 from app.controllers.telegram_integration import send_telegram_message, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
@@ -215,7 +215,18 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             return {"status": "Awaiting text input for photo generation"}
 
+        if payload_obj.message and payload_obj.message.text == "/credits":
+            user_id = payload_obj.message.from_.get('id')
+            chat_id = payload_obj.message.chat['id']
 
+            # Retrieve the total credits for the user
+            total_credits = await get_latest_total_credits(db, user_id=user_id, pk_bot=bot_id)
+            credits_message = f"Your total credits: {total_credits}"
+
+            # Send the total credits message to the user
+            await send_telegram_message(chat_id, credits_message, bot_token)
+            return {"status": "Credits information sent"}
+            
         if payload_obj.message and payload_obj.message.text == "/payment":
             # Code to generate invoice and send it to the user
             prices = [{"label": "Service Fee", "amount": 5000}]
@@ -316,6 +327,11 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             try:
                 confirmation_text = "Thank you for your payment!"
                 await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
+                # After updating user credits successfully
+                total_credits = await get_latest_total_credits(db, user_id=payload_obj.message.from_.get('id'), pk_bot=bot_id)
+                confirmation_text += f"\nYou now have {total_credits} total credits."
+                await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
+
                 logger.info(f"Payment confirmed for chat_id {payload_obj.message.chat['id']}.")
             except Exception as e:
                 logger.error(f"Failed to process successful payment for chat_id {payload_obj.message.chat['id']}: {e}")
