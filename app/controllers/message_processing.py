@@ -171,20 +171,6 @@ async def process_message(messages, db, chat_id, user_id, ai_placeholder_pk: int
             for chunk in humanized_response:
                 await send_telegram_message(chat_id, chunk, bot_token)
 
-                # Prepare the user_credit_info dictionary with necessary details
-                user_credit_info = {
-                    "channel": "TELEGRAM",
-                    "pk_bot": messages[0].bot_id,
-                    "user_id": user_id,
-                    "chat_id": chat_id,
-                    "credits": CREDIT_COST_TEXT,
-                    "transaction_type": "TEXT_GEN",  
-                    "transaction_date": datetime.utcnow(),
-                    "pk_payment": None
-                }
-
-                # Call update_user_credits to apply the credit change
-                await update_user_credits(db, user_credit_info)
 
         # Use the updated add_message function to save the response
         # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
@@ -194,7 +180,21 @@ async def process_message(messages, db, chat_id, user_id, ai_placeholder_pk: int
         # Mark all messages as processed again
         for message in messages:
             await mark_message_status(db, message.pk_messages, 'Y')
-    
+
+        # Prepare the user_credit_info dictionary with necessary details
+        user_credit_info = {
+            "channel": "TELEGRAM",
+            "pk_bot": messages[0].bot_id,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "credits": CREDIT_COST_TEXT,
+            "transaction_type": "TEXT_GEN",  
+            "transaction_date": datetime.utcnow(),
+            "pk_payment": None
+        }
+
+        # Call update_user_credits to apply the credit change
+        await update_user_credits(db, user_credit_info)
     else:
 
         # Response was not getted so we mark for reprocesing later
