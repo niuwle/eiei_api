@@ -264,7 +264,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         if payload_obj.message and payload_obj.message.text == "/credits":
 
             # Retrieve the total credits for the user
-            await send_credit_count(chat_id=chat_id, bot_token=bot_token, user_id=user_id, bot_id=bot_id, db=db)
+            await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_id))
             return {"status": "Credits information sent"}
             
         if payload_obj.message and payload_obj.message.text == "/payment":
@@ -337,7 +337,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 # After updating user credits successfully
                 confirmation_text = "Thank you for your payment! 💋💋💋"
                 await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
-                await send_credit_count(chat_id=chat_id, bot_token=bot_token, user_id=user_id, bot_id=bot_id, db=db)
+                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_id))
 
                 logger.info(f"Payment confirmed for chat_id {payload_obj.message.chat['id']}.")
             except Exception as e:

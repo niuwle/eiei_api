@@ -241,11 +241,10 @@ async def send_generate_options(chat_id: int, bot_token: str):
         await client.post(url, json=payload)
 
 
-async def send_credit_count(chat_id: int, bot_token: str, user_id: int, pk_bot: int, db: AsyncSession):
+async def send_credit_count(chat_id: int, bot_token: str, total_credits: Decimal) :
     keyboard = {
         "inline_keyboard": [[{"text": "Want more? 💦", "callback_data": "buy_credit"}]]
-    }
-    total_credits = await get_latest_total_credits(db, user_id, pk_bot)
+    } 
     
     text = f"💕 You have {str(total_credits)} credits left 💕"  # Convert Decimal to str for formatting
     payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
