@@ -9,7 +9,7 @@ from app.database import get_db
 from app.database_operations import (
     add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
 )
-from app.controllers.telegram_integration import send_telegram_message, send_generate_options, send_invoice, answer_pre_checkout_query
+from app.controllers.telegram_integration import send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
 from app.utils.process_photo import caption_photo
@@ -180,7 +180,61 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             elif data == "generate_audio":
                 await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
                 await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
+           
+            elif data.startswith("buy_"):
+                # Determine the amount based on the callback data
+                amount = 0
+                product_title = ""
+                product_description = ""
+                
+                if data == "buy_100_credits":
+                    amount = 10000  # Amount in the smallest currency unit, e.g., cents for USD
+                    product_title = "💎 100 Credits Pack"
+                    product_description = "Unlock exclusive content and enjoy more interactions!"
+                elif data == "buy_500_credits":
+                    amount = 50000
+                    product_title = "🚀 500 Credits Boost"
+                    product_description = "Dive deeper with more power to explore and interact!"
+                elif data == "buy_1000_credits":
+                    amount = 100000
+                    product_title = "🌌 Ultimate Access: 1000 Credits"
+                    product_description = "Unleash the full experience with unlimited access and adventures!"
+
+                # Prepare the prices structure for the invoice
+                prices = [{"label": "Service Fee", "amount": amount}]
+                currency = "USD"
+                payload = data
+                
+                # Construct and send the invoice
+                await send_invoice(
+                    chat_id=chat_id,
+                    title=product_title,
+                    description=product_description,
+                    payload=payload,
+                    currency=currency,
+                    prices=prices,
+                    bot_token=bot_token,
+                    start_parameter="payment-example",  # Can be adjusted as needed
+                    provider_data='',  # Adjust as necessary, or remove if not used
+                    photo_url='',  # Adjust as necessary, or remove if not used
+                    photo_size=0,  # Adjust as necessary, or remove if not used
+                    photo_width=0,  # Adjust as necessary, or remove if not used
+                    photo_height=0,  # Adjust as necessary, or remove if not used
+                    need_name=False,  # Adjust as necessary
+                    need_phone_number=False,  # Adjust as necessary
+                    need_email=False,  # Adjust as necessary
+                    need_shipping_address=False,  # Adjust as necessary
+                    send_phone_number_to_provider=False,  # Adjust as necessary
+                    send_email_to_provider=False,  # Adjust as necessary
+                    is_flexible=False,  # Adjust as necessary
+                    disable_notification=False,  # Adjust as necessary
+                    protect_content=False,  # Adjust as necessary
+                    reply_markup=None  # Adjust as necessary, make sure it's a serialized JSON string or None
+                )
+
+                return {"status": "generated invoice"}
             
+
             return {"status": "Callback query processed successfully"}
 
 
@@ -223,41 +277,10 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             return {"status": "Credits information sent"}
             
         if payload_obj.message and payload_obj.message.text == "/payment":
-            # Code to generate invoice and send it to the user
-            prices = [{"label": "Service Fee", "amount": 5000}]
-            start_parameter = "payment-example"
-            currency = "USD"
-            title = "Product Title"
-            description = "Product Description"
-            payload = "Custom-Payload"
             
-            await send_invoice(
-                chat_id=chat_id,
-                title=title,
-                description=description,
-                payload=payload,
-                currency=currency,
-                prices=prices,
-                bot_token=bot_token,
-                start_parameter=start_parameter,  # This can be '' if you don't need a specific start parameter
-                provider_data='',  # Adjust as necessary, or remove if not used
-                photo_url='',  # Adjust as necessary, or remove if not used
-                photo_size=0,  # Adjust as necessary, or remove if not used
-                photo_width=0,  # Adjust as necessary, or remove if not used
-                photo_height=0,  # Adjust as necessary, or remove if not used
-                need_name=False,  # Adjust as necessary
-                need_phone_number=False,  # Adjust as necessary
-                need_email=False,  # Adjust as necessary
-                need_shipping_address=False,  # Adjust as necessary
-                send_phone_number_to_provider=False,  # Adjust as necessary
-                send_email_to_provider=False,  # Adjust as necessary
-                is_flexible=False,  # Adjust as necessary
-                disable_notification=False,  # Adjust as necessary
-                protect_content=False,  # Adjust as necessary
-                reply_markup=None  # Adjust as necessary, make sure it's a serialized JSON string or None
-            )
+            await send_credit_purchase_options(chat_id, bot_token)
+            return {"status": "Payment command processed"}
 
-            return {"status": "generated invoice"}
 
         # Before the if statement
         logger.debug(f"PreCheckoutQuery data: {payload_obj.pre_checkout_query}")
@@ -309,7 +332,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 "user_id": payload_obj.message.from_.get('id'),
                 "chat_id": payload_obj.message.chat.get('id'),
                 "credits": 10,  # The number of credits to add
-                "transaction_type": "credit",  # Indicating this is a credit transaction
+                "transaction_type": "PAYMENT",  # Indicating this is a credit transaction
                 "transaction_date": datetime.utcfromtimestamp(payload_obj.message.date),  # Timestamp of the transaction
                 "pk_payment": pk_payment  # Linking this credit update to the payment record
             }
@@ -321,10 +344,9 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             try:
                 # After updating user credits successfully
-                confirmation_text = "Thank you for your payment!"
-                total_credits = await get_latest_total_credits(db, user_id=payload_obj.message.from_.get('id'), pk_bot=bot_id)
-                confirmation_text += f"\nYou now have {total_credits} total credits."
+                confirmation_text = "Thank you for your payment! 💋💋💋"
                 await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
+                await send_credit_count(payload_obj.message.chat['id'],bot_token)
 
                 logger.info(f"Payment confirmed for chat_id {payload_obj.message.chat['id']}.")
             except Exception as e:

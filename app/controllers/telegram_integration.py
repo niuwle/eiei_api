@@ -2,7 +2,7 @@
 import httpx
 import logging
 from app.config import TELEGRAM_API_URL, STRIPE_API_KEY
-
+from app.database_operations import get_latest_total_credits
 import asyncio
 import os 
 from typing import Tuple, List, Optional
@@ -229,16 +229,56 @@ async def send_generate_options(chat_id: int, bot_token: str):
     
     keyboard = {
         "inline_keyboard": [
-            [{"text": "1 photo", "callback_data": "generate_photo"}],
-            [{"text": "2 audio", "callback_data": "generate_audio"}]
+            [{"text": "📸 See Me - Choose and describe your perfect photo of me.", "callback_data": "generate_photo"}],
+            [{"text": "🔊 Hear Me - Pick and tell me what sweet nothings you'd like to hear.", "callback_data": "generate_audio"}]
         ]
     }
-    text = "CHOOSE WHAT YOU WANT:"
+    text = "💕 Let's make this moment special. 💕"
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    url = f"{TELEGRAM_API_URL}{bot_token}/sendMessage"
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json=payload)
+
+
+async def send_credit_count(chat_id: int, bot_token: str):
+    
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "Whant more? 💦", "callback_data": "buy_credit"}]]
+    }
+    total_credits = await get_latest_total_credits(db, user_id=payload_obj.message.from_.get('id'), pk_bot=bot_id)
+                
+    text = f"💕 You have {total_credits} credits left 💕"
     payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
     url = f"{TELEGRAM_API_URL}{bot_token}/sendMessage"
     async with httpx.AsyncClient() as client:
         await client.post(url, json=payload)
         
+async def send_credit_purchase_options(chat_id: int, bot_token: str):
+    
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "😈 Unlock Fun! - 100 Credits. Begin the adventure.", "callback_data": "buy_100_credits"}],
+            [{"text": "🍆 Boost Power! - 500 Credits. Amplify the thrill.", "callback_data": "buy_500_credits"}],
+            [{"text": "💦 Give me all! - 1000 Credits. So much to do!", "callback_data": "buy_1000_credits"}]
+        ]
+    }
+    
+    text = ("🔥 Ignite your desires with exclusive access. Choose your pleasure:")
+    
+    # Payload for the sendMessage request with the inline keyboard
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    
+    # API endpoint URL
+    url = f"{TELEGRAM_API_URL}{bot_token}/sendMessage"
+    
+    # Sending the message with the inline keyboard to the user
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        
+        # Optional: Check response status and handle potential errors
+        if response.status_code != 200:
+            logger.error(f"Failed to send credit purchase options. Response: {response.text}")
 
 async def answer_pre_checkout_query(pre_checkout_query_id: str, ok: bool, bot_token: str, error_message: str = None):
     url = f'{TELEGRAM_API_URL}{bot_token}/answerPreCheckoutQuery'
