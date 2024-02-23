@@ -224,6 +224,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
                 await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
            
+            if data == "ask_credit":
+                await send_credit_purchase_options(chat_id, bot_token)
            
             return {"status": "Callback query processed successfully"}
 

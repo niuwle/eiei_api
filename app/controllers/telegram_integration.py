@@ -243,7 +243,7 @@ async def send_generate_options(chat_id: int, bot_token: str):
 
 async def send_credit_count(chat_id: int, bot_token: str, total_credits: Decimal) :
     keyboard = {
-        "inline_keyboard": [[{"text": "Want more? 💦", "callback_data": "buy_credit"}]]
+        "inline_keyboard": [[{"text": "Want more? 💦", "callback_data": "ask_credit"}]]
     } 
     
     text = f"💕 You have {str(total_credits)} credits left 💕"  # Convert Decimal to str for formatting
