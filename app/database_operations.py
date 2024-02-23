@@ -10,6 +10,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from typing import List, Union
+from decimal import Decimal
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -204,22 +206,27 @@ async def get_latest_total_credits(db: AsyncSession, user_id: int, pk_bot: int) 
         return 0.0
 
 async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
-    # Extract user_id and pk_bot from user_credit_info for the lookup
     user_id = user_credit_info['user_id']
     pk_bot = user_credit_info['pk_bot']
-    credits_to_add = user_credit_info['credits']  # This could be positive or negative
+    credits_to_add = Decimal(user_credit_info['credits'])
 
-    # Get the latest total_credits value
+    logger.debug(f"Updating credits for user_id={user_id}, pk_bot={pk_bot}. Adding credits: {credits_to_add}")
+
     latest_total_credits = await get_latest_total_credits(db, user_id, pk_bot)
 
-    # Update the total_credits value with the new transaction
+    if latest_total_credits is None:
+        latest_total_credits = Decimal('0')
+        logger.debug(f"No existing credits found for user_id={user_id}. Initializing to 0.")
+
     updated_total_credits = latest_total_credits + credits_to_add
 
-    # Add the updated total_credits to user_credit_info
+    logger.debug(f"User_id={user_id} had {latest_total_credits} credits. After adding {credits_to_add}, new total is {updated_total_credits}.")
+
     user_credit_info['total_credits'] = updated_total_credits
 
-    # Proceed to insert the new credit record with updated total_credits
     new_credit = UserCredit(**user_credit_info)
     db.add(new_credit)
     await db.commit()
-    logger.info("User credits updated successfully.")
+
+    logger.info(f"Successfully updated credits for user_id={user_id}. New total credits: {updated_total_credits}. Details: {user_credit_info}")
+

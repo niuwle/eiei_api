@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
+from app.database_operations import update_user_credits, get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import update_telegram_message, send_telegram_message, send_audio_message, send_voice_note, send_photo_message
 from app.models.message import tbl_msg
@@ -11,15 +11,17 @@ from sqlalchemy.future import select
 from app.schemas import TextMessage
 from app.utils.generate_audio import generate_audio_from_text, generate_audio_with_monsterapi
 from app.utils.generate_photo import generate_photo_from_text
+from app.config import CREDIT_COST_PHOTO, CREDIT_COST_AUDIO, CREDIT_COST_TEXT
 import asyncio
 import regex as re
+
 
 from collections import deque
 from math import ceil
 
 logger = logging.getLogger(__name__)
 
-async def process_queue(chat_id: int, message_pk: int, ai_placeholder_pk: int,  db: AsyncSession):
+async def process_queue(chat_id: int, user_id: int,  message_pk: int, ai_placeholder_pk: int,  db: AsyncSession):
     try:
         timestamp = datetime.now()
         await asyncio.sleep(3)
@@ -36,7 +38,7 @@ async def process_queue(chat_id: int, message_pk: int, ai_placeholder_pk: int,  
             logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
 
             if unprocessed_messages[0].message_date <= timestamp:
-                await process_message(unprocessed_messages, db, chat_id, ai_placeholder_pk)
+                await process_message(unprocessed_messages, db, chat_id, user_id, ai_placeholder_pk)
             else:
                 # Skip processing as a new message arrived during the wait
                 logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
@@ -49,7 +51,7 @@ async def process_queue(chat_id: int, message_pk: int, ai_placeholder_pk: int,  
         await db.close()
 
 
-async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
+async def process_message(messages, db, chat_id, user_id, ai_placeholder_pk: int):
     logger.debug(f"Messages to process: {messages}") # Debug statement
 
     # Mark all messages as processed once
@@ -104,6 +106,22 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
                 if audio_file_path:
                     # Send the audio file to the user
                     await send_voice_note(chat_id=chat_id, audio_file_path=audio_file_path, bot_token=bot_token)
+
+                    # Prepare the user_credit_info dictionary with necessary details
+                    user_credit_info = {
+                        "channel": "TELEGRAM",
+                        "pk_bot": messages[0].bot_id,
+                        "user_id": user_id,
+                        "chat_id": chat_id,
+                        "credits": CREDIT_COST_AUDIO,
+                        "transaction_type": "AUDIO_GEN",  
+                        "transaction_date": datetime.utcnow(),
+                        "pk_payment": None
+                    }
+
+                    # Call update_user_credits to apply the credit change
+                    await update_user_credits(db, user_credit_info)
+                    
                     # Update to inform the user that the audio was generated successfully
                     await update_telegram_message(chat_id, generating_message_id, "Audio generated successfully.", bot_token)
                 else:
@@ -122,6 +140,22 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
             if photo_url:
                 # Send the generated photo URL to the user
                 await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=bot_token)
+
+                # Prepare the user_credit_info dictionary with necessary details
+                user_credit_info = {
+                    "channel": "TELEGRAM",
+                    "pk_bot": messages[0].bot_id,
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "credits": CREDIT_COST_PHOTO,
+                    "transaction_type": "PHOTO_GEN",  
+                    "transaction_date": datetime.utcnow(),
+                    "pk_payment": None
+                }
+
+                # Call update_user_credits to apply the credit change
+                await update_user_credits(db, user_credit_info)
+
             else:
                 # If photo generation failed, inform the user
                 await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate a photo from the description provided. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
@@ -136,6 +170,21 @@ async def process_message(messages, db, chat_id, ai_placeholder_pk: int):
             # Loop through each chunk and send it as a separate message
             for chunk in humanized_response:
                 await send_telegram_message(chat_id, chunk, bot_token)
+
+                # Prepare the user_credit_info dictionary with necessary details
+                user_credit_info = {
+                    "channel": "TELEGRAM",
+                    "pk_bot": messages[0].bot_id,
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "credits": CREDIT_COST_TEXT,
+                    "transaction_type": "TEXT_GEN",  
+                    "transaction_date": datetime.utcnow(),
+                    "pk_payment": None
+                }
+
+                # Call update_user_credits to apply the credit change
+                await update_user_credits(db, user_credit_info)
 
         # Use the updated add_message function to save the response
         # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')

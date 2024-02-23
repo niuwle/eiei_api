@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
-    get_latest_total_credits, add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, add_payment_details, update_user_credits
+    add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
 )
 from app.controllers.telegram_integration import send_telegram_message, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
@@ -17,7 +17,9 @@ from app.utils.error_handler import handle_exception
 from datetime import datetime
 logger = logging.getLogger(__name__)
 
-
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class Voice(BaseModel):
@@ -98,7 +100,7 @@ async def send_error_message_to_user(chat_id: int, bot_short_name: str, message:
     except Exception as e:
         logger.error(f"Failed to send error message to user due to: {e}")
 
-async def process_message_type(message_data, chat_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
+async def process_message_type(message_data, chat_id, user_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
     message_type, process_task, text_prefix = None, None, ""
     task_params = {} 
 
@@ -111,7 +113,7 @@ async def process_message_type(message_data, chat_id, message_id, bot_id, bot_sh
             text_prefix = predefined_response_text
         else:
             process_task = process_queue
-            task_params = {'chat_id': chat_id, 'db': db}  # common parameters for process_queue
+            task_params = {'chat_id': chat_id,'user_id': user_id, 'db': db}  # common parameters for process_queue
 
     elif message_data.photo:
         message_type = 'PHOTO'
@@ -136,8 +138,8 @@ async def process_message_type(message_data, chat_id, message_id, bot_id, bot_sh
     if message_type:
         
         messages_info = [
-            {'message_data': TextMessage(chat_id=chat_id, user_id=0, bot_id=bot_id, message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
-            {'message_data': TextMessage(chat_id=chat_id, user_id=0, bot_id=bot_id, message_text="[AI PLACEHOLDER]", message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
+            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
+            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text="[AI PLACEHOLDER]", message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
         ]
 
         added_messages = await add_messages(db, messages_info)
@@ -165,12 +167,12 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         bot_id=await get_bot_id_by_short_name(bot_short_name, db)
         
         bot_token=await get_bot_token(bot_id, db)
+        user_id = payload_obj.message.from_.get('id')
+        chat_id = payload_obj.message.chat['id']
       # Handling callback_query for inline keyboard responses
         if payload_obj.callback_query and payload_obj.callback_query.message:
-            chat_id = payload_obj.callback_query.message.chat['id']
+            
             data = payload_obj.callback_query.data
-            user_id = payload_obj.callback_query.from_.get('id')
-
             # Depending on the callback data, trigger the corresponding function
             if data == "generate_photo":
                 await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="PHOTO")
@@ -184,15 +186,12 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         # Ensure we're dealing with message updates
         if payload_obj.message:
-            chat_id = payload_obj.message.chat['id']
 
             if payload_obj.message.text == "/generate":
                 await send_generate_options(chat_id, bot_token)
                 return {"status": "Generate command processed"}
 
         if payload_obj.message and payload_obj.message.text == "/getvoice":
-            user_id = payload_obj.message.from_.get('id')
-            chat_id = payload_obj.message.chat['id']
 
             # Mark the chat as awaiting voice input in the database
             await mark_chat_as_awaiting(db=db, channel="TELEGRAM",chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
@@ -204,8 +203,6 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
 
         if payload_obj.message and payload_obj.message.text == "/getphoto":
-            user_id = payload_obj.message.from_.get('id')
-            chat_id = payload_obj.message.chat['id']
 
             # Mark the chat as awaiting photo input in the database
             await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="PHOTO")
@@ -216,8 +213,6 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             return {"status": "Awaiting text input for photo generation"}
 
         if payload_obj.message and payload_obj.message.text == "/credits":
-            user_id = payload_obj.message.from_.get('id')
-            chat_id = payload_obj.message.chat['id']
 
             # Retrieve the total credits for the user
             total_credits = await get_latest_total_credits(db, user_id=user_id, pk_bot=bot_id)
@@ -340,7 +335,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         logger.info(f"Incoming payload is not a special case, procesing with handling of chat messages")
         # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
-        await process_message_type(payload_obj.message, chat_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
+        await process_message_type(payload_obj.message, chat_id, user_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
 
 
     except Exception as e:

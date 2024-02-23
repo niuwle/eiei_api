@@ -1,6 +1,6 @@
 
 # In ./app/models/user_credits.py
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, ForeignKey
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, ForeignKey, DECIMAL
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from app.models.payments import Payment
@@ -15,9 +15,9 @@ class UserCredit(Base):
     pk_bot = Column(BigInteger, nullable=False)
     user_id = Column(BigInteger, nullable=False)
     chat_id = Column(BigInteger, nullable=False)
-    credits = Column(Float)
+    credits = Column(DECIMAL(precision=10, scale=2))
     transaction_type = Column(String(100))
     transaction_date = Column(DateTime, default=datetime.utcnow)
     pk_payment = Column(BigInteger)
-    total_credits = Column(BigInteger)
+    total_credits = Column(DECIMAL(precision=10, scale=2))
     

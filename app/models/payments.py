@@ -1,5 +1,5 @@
 # In ./app/models/payments.py
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, Boolean
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, Boolean, DECIMAL
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 from . import Base
@@ -19,7 +19,7 @@ class Payment(Base):
     chat_type = Column(String(50), nullable=False)
     payment_date = Column(DateTime, default=datetime.utcnow)
     currency = Column(String(10))
-    total_amount = Column(Float)
+    total_amount = Column(DECIMAL(precision=10, scale=2))
     invoice_payload = Column(String(4000))
     telegram_payment_charge_id = Column(String(400))
     provider_payment_charge_id = Column(String(400))
