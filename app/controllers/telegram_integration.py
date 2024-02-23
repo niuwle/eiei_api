@@ -3,6 +3,7 @@ import httpx
 import logging
 from app.config import TELEGRAM_API_URL, STRIPE_API_KEY
 from app.database_operations import get_latest_total_credits
+from decimal import Decimal
 import asyncio
 import os 
 from typing import Tuple, List, Optional
@@ -240,20 +241,18 @@ async def send_generate_options(chat_id: int, bot_token: str):
         await client.post(url, json=payload)
 
 
-async def send_credit_count(chat_id: int, bot_token: str):
-    
+async def send_credit_count(chat_id: int, bot_token: str, user_id: int, pk_bot: int, db: AsyncSession):
     keyboard = {
-        "inline_keyboard": [
-            [{"text": "Whant more? 💦", "callback_data": "buy_credit"}]]
+        "inline_keyboard": [[{"text": "Want more? 💦", "callback_data": "buy_credit"}]]
     }
-    total_credits = await get_latest_total_credits(db, user_id=payload_obj.message.from_.get('id'), pk_bot=bot_id)
-                
-    text = f"💕 You have {total_credits} credits left 💕"
+    total_credits = await get_latest_total_credits(db, user_id, pk_bot)
+    
+    text = f"💕 You have {str(total_credits)} credits left 💕"  # Convert Decimal to str for formatting
     payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
-    url = f"{TELEGRAM_API_URL}{bot_token}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     async with httpx.AsyncClient() as client:
         await client.post(url, json=payload)
-        
+
 async def send_credit_purchase_options(chat_id: int, bot_token: str):
     
     keyboard = {

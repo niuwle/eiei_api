@@ -192,7 +192,7 @@ async def add_payment_details(db: AsyncSession, payment_info: dict) -> int:
     logger.info(f"add_payment_details {new_payment.pk_payment}")
     return new_payment.pk_payment
 
-async def get_latest_total_credits(db: AsyncSession, user_id: int, pk_bot: int) -> float:
+async def get_latest_total_credits(db: AsyncSession, user_id: int, pk_bot: int) -> Decimal:
     try:
         latest_credit = await db.execute(
             select(UserCredit.total_credits)
@@ -201,11 +201,11 @@ async def get_latest_total_credits(db: AsyncSession, user_id: int, pk_bot: int) 
             .limit(1)
         )
         latest_credit_value = latest_credit.scalar_one_or_none()
-        return latest_credit_value if latest_credit_value is not None else 0.0
+        return Decimal(latest_credit_value) if latest_credit_value is not None else Decimal(0)
     except SQLAlchemyError as e:
         logger.error(f"Database error in get_latest_total_credits: {e}")
-        return 0.0
-
+        return Decimal(0)
+        
 async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
     user_id = user_credit_info['user_id']
     pk_bot = user_credit_info['pk_bot']
