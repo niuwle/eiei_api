@@ -163,7 +163,10 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         raise HTTPException(status_code=403, detail="Invalid token")
     try:
         payload = await request.json()
+        logger.debug('Raw JSON Payload: %s', payload)
         payload_obj = TelegramWebhookPayload(**payload)
+
+        logger.debug('Parsed Payload: %s', payload_obj.dict())
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
         if payload_obj.message and payload_obj.message.from_:
