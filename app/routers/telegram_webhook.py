@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
-    add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
+    insert_user_if_not_exists, is_user_banned, add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
 )
 from app.controllers.telegram_integration import send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
@@ -156,19 +156,43 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
 async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str, db: AsyncSession = Depends(get_db)):
-    chat_id = None # Declare chat_id outside the try block for wider scope
+    chat_id = None  # Declare chat_id outside the try block for wider scope
+    user_id = None  # Similarly, declare user_id for broader access
+    bot_token = None  # Similarly, declare bot_token for broader access
     if token != SECRET_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid token")
     try:
         payload = await request.json()
-        logger.debug('Raw JSON Payload: %s', payload)
+        payload_obj = TelegramWebhookPayload(**payload)
+        bot_id = await get_bot_id_by_short_name(bot_short_name, db)
 
-        payload_obj = TelegramWebhookPayload(**payload)  # Parse JSON to Pydantic model
-        logger.debug('Parsed Payload: %s', payload_obj.dict())
+        if payload_obj.message and payload_obj.message.from_:
+            # Use the username as a fallback for last_name if last_name is not provided
+            last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
+            user_data = {
+                'id': payload_obj.message.from_.get('id'),
+                'channel': 'TELEGRAM',
+                'is_bot': payload_obj.message.from_.get('is_bot', False),
+                'first_name': payload_obj.message.from_.get('first_name', ''),
+                'last_name': payload_obj.message.from_.get('last_name', ''),  
+                'username': payload_obj.message.from_.get('username', ''),  # Optional, defaulting to empty string as it's not provided
+                'language_code': payload_obj.message.from_.get('language_code', ''),  # Optional, using .get() in case it's not present
+                'is_premium': False,  # Optional, defaulting to False as it's not provided
+                'pk_bot': bot_id  # Adding the bot_id as pk_bot
+            }
 
-        bot_id=await get_bot_id_by_short_name(bot_short_name, db)
-        
-        bot_token=await get_bot_token(bot_id, db)
+            # Insert the user if not exists and check if banned
+            inserted = await insert_user_if_not_exists(db, user_data)
+            if inserted:
+                logger.info(f"User {user_data['id']} inserted.")
+            else:
+                logger.info(f"User {user_data['id']} already exists.")
+
+            if await is_user_banned(db, user_data['id'],bot_id , 'TELEGRAM'):
+                chat_id = payload_obj.message.chat.get('id')
+                await send_error_message_to_user(chat_id, bot_short_name, "Your account is banned.")
+                return {"status": "User is banned"}
+
 
         # Handling callback_query for inline keyboard responses
         if 'callback_query' in payload:

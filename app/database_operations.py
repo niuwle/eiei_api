@@ -5,7 +5,9 @@ from app.models.telegram_config import TelegramConfig
 from app.models.awaiting_user_input import tbl_300_awaiting_user_input
 from app.models.payments import Payment
 from app.models.user_credits import UserCredit
+from app.models.user_info import tbl_150_user_info
 from datetime import datetime
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -231,3 +233,41 @@ async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
 
     logger.info(f"Successfully updated credits for user_id={user_id}. New total credits: {updated_total_credits}. Details: {user_credit_info}")
 
+
+async def insert_user_if_not_exists(db: AsyncSession, user_data: dict) -> bool:
+    # Check if the user already exists
+    query = select(tbl_150_user_info).where(
+        tbl_150_user_info.id == user_data['id'],
+        tbl_150_user_info.pk_bot == user_data['pk_bot'],
+        tbl_150_user_info.channel == user_data['channel']
+    )
+    existing_user = await db.execute(query)
+    if existing_user.scalars().first() is not None:
+        logger.info("User already exists, skipping insertion.")
+        return False  # User already exists
+
+    # Insert the new user
+    try:
+        new_user = tbl_150_user_info(**user_data)
+        db.add(new_user)
+        await db.commit()
+        logger.info("New user inserted successfully.")
+        return True
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Failed to insert new user: {e}")
+        return False
+
+
+async def is_user_banned(db: AsyncSession, id: int, pk_bot: int, channel: str) -> bool:
+    query = select(tbl_150_user_info.is_banned).where(
+        tbl_150_user_info.id == id,
+        tbl_150_user_info.pk_bot == pk_bot,
+        tbl_150_user_info.channel == channel
+    )
+    result = await db.execute(query)
+    is_banned = result.scalar_one_or_none()
+    if is_banned is None:
+        logger.warning("User not found.")
+        return False  # Assuming not banned if the user doesn't exist for safety
+    return is_banned
