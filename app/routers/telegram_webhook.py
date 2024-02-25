@@ -169,7 +169,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         logger.debug('Parsed Payload: %s', payload_obj.dict())
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
         bot_token = await get_bot_token(bot_id, db)
-        
+
         if payload_obj.message and payload_obj.message.from_:
             # Use the username as a fallback for last_name if last_name is not provided
             last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
@@ -320,6 +320,19 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         # Inside your successful payment handling block
         if payload_obj.message and payload_obj.message.successful_payment:
             successful_payment = payload_obj.message.successful_payment
+            invoice_payload = successful_payment.invoice_payload  # This is your key to determine the purchase
+            
+            # Example mapping of invoice_payload to credits
+            credits_options = {
+                "buy_100_credits": 100,
+                "buy_500_credits": 500,
+                "buy_1000_credits": 1000,
+            }
+
+            # Determine the number of credits based on the invoice_payload
+            credits_to_add = credits_options.get(invoice_payload, 0)  # Default to 0 if not found
+            
+            
             payment_info = {
                 "update_id": payload_obj.update_id,
                 "message_id": payload_obj.message.message_id,
@@ -351,7 +364,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 "pk_bot": bot_id,  # Assuming you've retrieved this earlier
                 "user_id": payload_obj.message.from_.get('id'),
                 "chat_id": payload_obj.message.chat.get('id'),
-                "credits": 10,  # The number of credits to add
+                "credits": credits_to_add,  # The number of credits to add
                 "transaction_type": "PAYMENT",  # Indicating this is a credit transaction
                 "transaction_date": datetime.utcfromtimestamp(payload_obj.message.date),  # Timestamp of the transaction
                 "pk_payment": pk_payment  # Linking this credit update to the payment record
