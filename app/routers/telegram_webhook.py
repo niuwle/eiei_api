@@ -6,14 +6,12 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
-from app.database_operations import (
-    add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
-)
-from app.controllers.telegram_integration import send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
-from app.controllers.message_processing import process_queue
-from app.utils.process_audio import transcribe_audio
-from app.utils.process_photo import caption_photo
-from app.utils.error_handler import handle_exception
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.utils.message_utils import send_error_message_to_user
+from app.controllers.callback_query_handler import handle_callback_query
+from app.controllers.payment_handler import handle_pre_checkout_query, handle_successful_payment
+from app.database import get_db
 from decimal import Decimal
 
 from datetime import datetime
@@ -93,14 +91,7 @@ class TelegramWebhookPayload(BaseModel):
 router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
-async def send_error_message_to_user(chat_id: int, bot_short_name: str, message: str):
-    try:
-        async with get_db() as db:
-            bot_id = await get_bot_id_by_short_name(bot_short_name, db)
-            bot_token = await get_bot_token(bot_id, db)
-            await send_telegram_message(chat_id, message, bot_token)
-    except Exception as e:
-        logger.error(f"Failed to send error message to user due to: {e}")
+# This function has been moved to app/utils/message_utils.py
 
 async def process_message_type(message_data, chat_id, user_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
     message_type, process_task, text_prefix = None, None, ""
@@ -177,28 +168,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             user_id = callback_query['from']['id']
             data = callback_query['data']
 
-            if data.startswith("buy_"):
-                credit_amounts = {
-                    "buy_100_credits": 500,
-                    "buy_500_credits": 2000,
-                    "buy_1000_credits": 3500
-                }
-                titles = {
-                    "buy_100_credits": "💎 100 Credits - Unlock More Fun!",
-                    "buy_500_credits": "🚀 500 Credits - Boost Your Power!",
-                    "buy_1000_credits": "🌌 1000 Credits - Ultimate Experience!"
-                }
-                descriptions = {
-                    "buy_100_credits": "Dive into endless fun with 100 credits.",
-                    "buy_500_credits": "Amplify the thrill with 500 credits.",
-                    "buy_1000_credits": "Unlock all features with 1000 credits!"
-                }
-
-                amount = credit_amounts.get(data, 0)
-                title = titles.get(data, "Credits Pack")
-                description = descriptions.get(data, "Get more credits for more interaction.")
-
-                prices = [{"label": "Service Fee", "amount": amount}]
+            await handle_callback_query(callback_query, db, bot_short_name, bot_token)
                 currency = "USD"
                 payload = data
 
@@ -279,12 +249,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         logger.debug(f"PreCheckoutQuery data: {payload_obj.pre_checkout_query}")
 
         if payload_obj.pre_checkout_query:
-            pre_checkout_query_id = payload_obj.pre_checkout_query.id
-            try:
-                await answer_pre_checkout_query(pre_checkout_query_id, ok=True, bot_token=bot_token)
-                logger.info(f"PreCheckoutQuery {pre_checkout_query_id} answered successfully.")
-            except Exception as e:
-                logger.error(f"Failed to answer PreCheckoutQuery {pre_checkout_query_id}: {e}")
+            await handle_pre_checkout_query(payload_obj.pre_checkout_query, bot_token)
 
 
             return {"status": "PreCheckoutQuery"}
@@ -292,26 +257,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         # Inside your successful payment handling block
         if payload_obj.message and payload_obj.message.successful_payment:
-            successful_payment = payload_obj.message.successful_payment
-            payment_info = {
-                "update_id": payload_obj.update_id,
-                "message_id": payload_obj.message.message_id,
-                "user_id": payload_obj.message.from_.get('id'),
-                "user_is_bot": payload_obj.message.from_.get('is_bot', False),
-                "user_first_name": payload_obj.message.from_.get('first_name', ''),
-                "user_language_code": payload_obj.message.from_.get('language_code', ''),
-                "chat_id": payload_obj.message.chat.get('id'),
-                "chat_first_name": payload_obj.message.chat.get('first_name', ''),
-                "chat_type": payload_obj.message.chat.get('type', ''),
-                "payment_date": datetime.utcfromtimestamp(payload_obj.message.date),
-                "currency": successful_payment.currency,
-                "total_amount": successful_payment.total_amount / 100.0, # Assuming total_amount is in cents
-                "invoice_payload": successful_payment.invoice_payload,
-                "telegram_payment_charge_id": successful_payment.telegram_payment_charge_id,
-                "provider_payment_charge_id": successful_payment.provider_payment_charge_id
-            }
-            # Initialize pk_payment to None
-            pk_payment = None
+            await handle_successful_payment(payload_obj.message, db, bot_token)
             # Log the successful transaction
             try:
                 pk_payment = await add_payment_details(db, payment_info)
