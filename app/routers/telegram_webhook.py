@@ -168,7 +168,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         logger.debug('Parsed Payload: %s', payload_obj.dict())
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
-
+        bot_token = await get_bot_token(bot_id, db)
+        
         if payload_obj.message and payload_obj.message.from_:
             # Use the username as a fallback for last_name if last_name is not provided
             last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
@@ -236,7 +237,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                     payload=payload,
                     currency=currency,
                     prices=prices,
-                    bot_token=await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db),
+                    bot_token=bot_token,
                     start_parameter="example"
                 )
                 
@@ -262,12 +263,11 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             chat_id = payload_obj.message.chat['id']
 
         # Ensure we're dealing with message updates
-        if payload_obj.message:
-            
 
-            if payload_obj.message.text == "/generate":
-                await send_generate_options(chat_id, bot_token)
-                return {"status": "Generate command processed"}
+        if payload_obj.message and payload_obj.message.text == "/generate":
+        
+            await send_generate_options(chat_id, bot_token)
+            return {"status": "Generate command processed"}
 
         if payload_obj.message and payload_obj.message.text == "/getvoice":
 
