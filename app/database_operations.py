@@ -252,6 +252,25 @@ async def insert_user_if_not_exists(db: AsyncSession, user_data: dict) -> bool:
         db.add(new_user)
         await db.commit()
         logger.info("New user inserted successfully.")
+
+        
+        # Adding initial 50 credits gift
+        user_credit_info = {
+            "channel": "TELEGRAM",  # Or however you determine the channel
+            "pk_bot": user_data['pk_bot'],  # Assuming you've retrieved this earlier
+            "user_id": user_data['id'],
+            "chat_id": user_data['chat_id'],
+            "credits": Decimal('50'),  
+            "transaction_type": "FIRST_TIME_USER",
+            "transaction_date": datetime.utcfromtimestamp(payload_obj.message.date),  # Timestamp of the transaction
+            "pk_payment": None
+        }
+        # Call the function to update user credits
+        try:
+            await update_user_credits(db, user_credit_info)
+        except Exception as e:
+            logger.error(f"Failed to update user credits: {e}")
+            
         return True
     except IntegrityError as e:
         await db.rollback()

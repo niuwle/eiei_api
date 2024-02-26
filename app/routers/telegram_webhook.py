@@ -171,6 +171,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         bot_token = await get_bot_token(bot_id, db)
 
         if payload_obj.message and payload_obj.message.from_:
+            chat_id = payload_obj.message.chat.get('id')
             # Use the username as a fallback for last_name if last_name is not provided
             last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
             user_data = {
@@ -182,7 +183,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 'username': payload_obj.message.from_.get('username', ''),  # Optional, defaulting to empty string as it's not provided
                 'language_code': payload_obj.message.from_.get('language_code', ''),  # Optional, using .get() in case it's not present
                 'is_premium': False,  # Optional, defaulting to False as it's not provided
-                'pk_bot': bot_id  # Adding the bot_id as pk_bot
+                'pk_bot': bot_id,  # Adding the bot_id as pk_bot
+                'chat_id': chat_id  # Adding chat_id
             }
 
             # Insert the user if not exists and check if banned
@@ -193,7 +195,6 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 logger.info(f"User {user_data['id']} already exists.")
 
             if await is_user_banned(db, user_data['id'],bot_id , 'TELEGRAM'):
-                chat_id = payload_obj.message.chat.get('id')
                 await send_error_message_to_user(chat_id, bot_short_name, "Your account is banned.")
                 return {"status": "User is banned"}
 

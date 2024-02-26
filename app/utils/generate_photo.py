@@ -2,28 +2,55 @@
 import httpx
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
+import random
+import asyncio
 from typing import Optional
-
+from b2sdk.v1 import InMemoryAccountInfo, B2Api
+from app.config import B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME
+from .file_list_cache import get_cached_file_list
 # Set up logging
 logger = logging.getLogger(__name__)
 
 
-async def generate_photo_from_text(text: str, db: AsyncSession) -> Optional[str]:
+# Function to generate a signed URL
+async def generate_signed_url(file_id: str) -> Optional[str]:
+    info = InMemoryAccountInfo()
+    b2_api = B2Api(info)
+    b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+    bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+
+    valid_duration_in_seconds = 3600  # or any duration you prefer
+    b2_authorization_token = bucket.get_download_authorization(file_id, valid_duration_in_seconds)
+    signed_url = f"https://f005.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_id}?Authorization={b2_authorization_token}"
+    logger.info(f"signed_url URL: {signed_url}")
+    return signed_url
+
+# Function to get a random photo URL from the cached list
+async def get_random_photo_url() -> Optional[str]:
+    file_info = await get_cached_file_list()
+    if not file_info:
+        logger.error("No file info available in cache.")
+        return None
+    
+    # Select a random file
+    file_id = random.choice(list(file_info.keys()))
+    logger.info(f"Selected file ID for generating signed URL: {file_id}")
+    
+    # Generate and return the signed URL
+    return await generate_signed_url(file_id)
+
+# Example function that uses the get_random_photo_url
+async def generate_photo_from_text(text: str) -> Optional[str]:
     """
-    For testing purposes, this function now skips actual photo generation
-    and returns a static URL to a specific jpg file.
-
-    Parameters:
-    - text (str): The text description (unused in this mock implementation).
-    - db (AsyncSession): The database session (unused in this mock implementation).
-
-    Returns:
-    - Optional[str]: The URL of the specific jpg file for testing purposes.
+    Generates a signed URL for a random photo from the B2 bucket based on cached file list.
     """
-    # Mock URL to the jpg file - replace with the actual URL where the jpg file is accessible
-    photo_url = "https://eiei-api.onrender.com/static/cats.jpg"
+    try:
+        photo_url = await get_random_photo_url()
+        return photo_url
+    except Exception as e:
+        logger.error(f"Failed to generate photo from text: {str(e)}")
+        return None
 
-    return photo_url
 
 async def generate_photo_from_textFUTURE(text: str, db: AsyncSession) -> Optional[str]:
     """

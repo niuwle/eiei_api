@@ -136,7 +136,8 @@ async def process_message(messages, db, chat_id, user_id, ai_placeholder_pk: int
             logger.debug("User is awaiting photo generation")
             # Clear the awaiting status for photo
             await clear_awaiting_status(db=db, chat_id=chat_id)
-            photo_url = await generate_photo_from_text(text=response_text, db=db)
+            photo_url = await generate_photo_from_text(text=response_text)
+            logger.info(f"photo_url generated: {photo_url}")
             if photo_url:
                 # Send the generated photo URL to the user
                 await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=bot_token)

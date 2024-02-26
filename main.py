@@ -1,19 +1,30 @@
-# app/main.py
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from app.controllers import router as api_router
-# from app.routers.message_controller import router as message_router
 from app.routers.telegram_webhook import router as telegram_router
 from app.logging_config import setup_logging
 from fastapi.staticfiles import StaticFiles
+import asyncio
+from app.utils.file_list_cache import get_cached_file_list
 
 setup_logging()
 app = FastAPI()
 
+import logging
+
+logger = logging.getLogger(__name__)
 # Include routers
 app.include_router(api_router)
-# app.include_router(message_router)
 app.include_router(telegram_router)
 
-
-# Assuming your jpg file is in a folder named 'static' in your root directory
+# Mount static directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.on_event("startup")
+async def startup_event():
+    # Refresh the file list cache when the application starts
+    file_list = await get_cached_file_list()
+    # Print the refreshed file list
+    logger.info("Cache initialized with the following files:")
+    
+    for file_url in file_list:
+        logger.info(file_url)
