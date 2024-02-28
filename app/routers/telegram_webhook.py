@@ -18,6 +18,7 @@ from decimal import Decimal
 
 from datetime import datetime
 from app.utils.error_handler import error_handler
+
 logger = logging.getLogger(__name__)
 
 # Configure logging
@@ -108,7 +109,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
     task_params = {} 
 
     # Check if the message text starts with "/" and is not a recognized command
-    if message_data.text and message_data.text.startswith("/") and message_data.text not in ["/start", "/generate", "/getvoice", "/getphoto", "/credits", "/payment"]:
+    if message_data.text and message_data.text.startswith("/") and message_data.text not in ["/start", "/generate", "/getvoice", "/getphoto", "/credits", "/payment", "/reset"]:
         # Log the ignored unknown command for debugging purposes
         logger.info(f"Ignoring unknown command: {message_data.text}")
         return  # Ignore the message and return early
@@ -122,7 +123,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             text_prefix = predefined_response_text
         else:
             process_task = process_queue
-            task_params = {'chat_id': chat_id,'user_id': user_id, 'db': db}  # common parameters for process_queue
+            task_params = {'chat_id': chat_id, 'bot_id': bot_id,'user_id': user_id, 'db': db}  # common parameters for process_queue
 
     elif message_data.photo:
         message_type = 'PHOTO'

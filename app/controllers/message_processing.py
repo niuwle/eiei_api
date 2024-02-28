@@ -12,6 +12,7 @@ from app.schemas import TextMessage
 from app.utils.generate_audio import generate_audio_from_text, generate_audio_with_monsterapi
 from app.utils.generate_photo import generate_photo_from_text
 from app.config import CREDIT_COST_PHOTO, CREDIT_COST_AUDIO, CREDIT_COST_TEXT
+from app.utils.error_handler import send_error_notification
 import asyncio
 import regex as re
 
@@ -21,7 +22,7 @@ from math import ceil
 
 logger = logging.getLogger(__name__)
 
-async def process_queue(chat_id: int, user_id: int,  message_pk: int, ai_placeholder_pk: int,  db: AsyncSession):
+async def process_queue(chat_id: int, bot_id: int, user_id: int,  message_pk: int, ai_placeholder_pk: int,  db: AsyncSession):
     try:
         timestamp = datetime.now()
         await asyncio.sleep(3)
@@ -38,7 +39,7 @@ async def process_queue(chat_id: int, user_id: int,  message_pk: int, ai_placeho
             logger.info(f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}")
 
             if unprocessed_messages[0].message_date <= timestamp:
-                await process_message(unprocessed_messages, db, chat_id, user_id, ai_placeholder_pk)
+                await process_message(unprocessed_messages, db, chat_id, bot_id, user_id, ai_placeholder_pk)
             else:
                 # Skip processing as a new message arrived during the wait
                 logger.info(f"Skipping processing: New message for chat_id {chat_id} arrived during wait.")
@@ -47,11 +48,12 @@ async def process_queue(chat_id: int, user_id: int,  message_pk: int, ai_placeho
     except Exception as e:
         logger.error(f'Error processing queue: {e}')
         await db.rollback()
+        await send_error_notification(chat_id, bot_id, db,'Error: e001')
     finally:
         await db.close()
 
 
-async def process_message(messages, db, chat_id, user_id, ai_placeholder_pk: int):
+async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder_pk: int):
     logger.debug(f"Messages to process: {messages}") # Debug statement
 
     # Mark all messages as processed once
@@ -63,6 +65,7 @@ async def process_message(messages, db, chat_id, user_id, ai_placeholder_pk: int
         response_text = await asyncio.wait_for(get_chat_completion(chat_id, messages[0].bot_id, db), timeout=10)
     except asyncio.TimeoutError:
         logger.error(f"get_chat_completion timed out for chat_id {chat_id}")
+        await send_error_notification(chat_id, bot_id, db,'Error: e002')
         response_text = None
         
     logger.debug(f"Chat completion response: {response_text}") # Debug statement
