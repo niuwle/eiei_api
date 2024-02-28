@@ -13,10 +13,11 @@ from app.controllers.telegram_integration import send_credit_count, send_telegra
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
 from app.utils.process_photo import caption_photo
-from app.utils.error_handler import handle_exception
+
 from decimal import Decimal
 
 from datetime import datetime
+from app.utils.error_handler import error_handler
 logger = logging.getLogger(__name__)
 
 # Configure logging
@@ -106,6 +107,12 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
     message_type, process_task, text_prefix = None, None, ""
     task_params = {} 
 
+    # Check if the message text starts with "/" and is not a recognized command
+    if message_data.text and message_data.text.startswith("/") and message_data.text not in ["/start", "/generate", "/getvoice", "/getphoto", "/credits", "/payment"]:
+        # Log the ignored unknown command for debugging purposes
+        logger.info(f"Ignoring unknown command: {message_data.text}")
+        return  # Ignore the message and return early
+
     if message_data.text:
         message_type = 'TEXT'
         text_prefix = message_data.text
@@ -122,20 +129,20 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         process_task = caption_photo
         text_prefix = "[PROCESSING PHOTO]"
         user_caption = message_data.caption if message_data.caption else None
-        task_params = { 'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db, 'user_caption': user_caption}
+        task_params = { 'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db, 'user_caption': user_caption}
 
     elif message_data.document and message_data.document.mime_type.startswith("image/"):
         message_type = 'DOCUMENT'
         process_task = caption_photo
         text_prefix = "[PROCESSING DOCUMENT AS PHOTO]"
         user_caption = message_data.caption if message_data.caption else None
-        task_params = {'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'db': db,'user_caption': user_caption}
+        task_params = {'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db,'user_caption': user_caption}
 
     elif message_data.voice:
         message_type = 'AUDIO'
         process_task = transcribe_audio
         text_prefix = "[TRANSCRIBING AUDIO]"
-        task_params = {'background_tasks': background_tasks, 'bot_id': bot_id, 'chat_id': chat_id, 'db': db}  # common parameters for transcribe_audio
+        task_params = {'background_tasks': background_tasks, 'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db}  # common parameters for transcribe_audio
 
     if message_type:
         
@@ -155,6 +162,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             background_tasks.add_task(process_task, **all_task_params)
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
+@error_handler
 async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str, db: AsyncSession = Depends(get_db)):
     chat_id = None  # Declare chat_id outside the try block for wider scope
     user_id = None  # Similarly, declare user_id for broader access
