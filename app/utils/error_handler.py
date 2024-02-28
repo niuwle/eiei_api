@@ -17,7 +17,6 @@ def error_handler(endpoint):
         request: Request = kwargs.get('request')
         background_tasks: BackgroundTasks = kwargs.get('background_tasks')
         bot_short_name: str = kwargs.get('bot_short_name')
-        bot_id = await get_bot_id_by_short_name(bot_short_name, db)
         try:
             # Attempt to extract chat_id from the request body for error reporting
             body = await request.json()
@@ -30,7 +29,7 @@ def error_handler(endpoint):
             logger.error(f"An error occurred: {e}")
             if chat_id:
                 # If we have a chat_id, attempt to notify the user of the error
-                background_tasks.add_task(send_error_notification, chat_id, bot_id, "Sorry, something went wrong. Please try again later.")
+                background_tasks.add_task(send_telegram_message, chat_id, bot_short_name, "Sorry, something went wrong. Please try again later. e003")
             # Re-raise the exception to let FastAPI's global exception handler take over
             raise
     return wrapper
