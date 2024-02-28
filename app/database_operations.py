@@ -272,7 +272,7 @@ async def insert_user_if_not_exists(db: AsyncSession, user_data: dict) -> bool:
             "chat_id": user_data['chat_id'],
             "credits": Decimal('50'),  
             "transaction_type": "FIRST_TIME_USER",
-            "transaction_date": datetime.utcfromtimestamp(datetime.now()),  # Timestamp of the transaction
+            "transaction_date": datetime.utcnow(),  # Timestamp of the transaction
             "pk_payment": None
         }
         # Call the function to update user credits

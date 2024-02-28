@@ -174,6 +174,15 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         if payload_obj.message and payload_obj.message.from_:
             chat_id = payload_obj.message.chat.get('id')
+            user_id = payload_obj.message.from_.get('id')
+            
+            # Perform the credit check after determining user_id and chat_id
+            total_credits = await get_latest_total_credits(db=db, user_id=user_id, bot_id=bot_id)
+            if total_credits < Decimal('0'):
+                # User does not have enough credits, send a message and stop further processing
+                await send_telegram_message(chat_id, "You don't have enough credits to perform this operation.", bot_token)
+                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=total_credits)
+                return {"status": "Insufficient credits"}
             # Use the username as a fallback for last_name if last_name is not provided
             last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
             user_data = {
