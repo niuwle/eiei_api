@@ -78,15 +78,8 @@ async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> Tupl
     return False, 0
 
 
-async def send_telegram_message_OLD(chat_id: int, text: str, bot_token: str) -> bool:
-    # Send 'typing' action
-    await send_typing_action(chat_id, bot_token)
-
-    # Calculate delay based on the length of the message
-    typing_delay = calculate_typing_delay(text)
-    await asyncio.sleep(typing_delay)
-
-    # Send the actual message
+async def send_telegram_error_message(chat_id: int, text: str, bot_token: str) -> bool:
+    
     url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
     payload = {"chat_id": chat_id, "text": text}
 

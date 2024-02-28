@@ -17,7 +17,7 @@ from app.utils.process_photo import caption_photo
 from decimal import Decimal
 
 from datetime import datetime
-from app.utils.error_handler import error_handler
+from app.utils.error_handler import error_handler, send_error_notification
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +95,7 @@ class TelegramWebhookPayload(BaseModel):
 router = APIRouter()
 SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
 
-async def send_error_message_to_user(chat_id: int, bot_short_name: str, message: str):
-    try:
-        async with get_db() as db:
-            bot_id = await get_bot_id_by_short_name(bot_short_name, db)
-            bot_token = await get_bot_token(bot_id, db)
-            await send_telegram_message(chat_id, message, bot_token)
-    except Exception as e:
-        logger.error(f"Failed to send error message to user due to: {e}")
+
 
 async def process_message_type(message_data, chat_id, user_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
     message_type, process_task, text_prefix = None, None, ""
@@ -204,7 +197,9 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 logger.info(f"User {user_data['id']} already exists.")
 
             if await is_user_banned(db, user_data['id'],bot_id , 'TELEGRAM'):
-                await send_error_message_to_user(chat_id, bot_short_name, "Your account is banned.")
+
+                await send_error_notification(chat_id, bot_short_name, "Your account is banned.")
+                
                 return {"status": "User is banned"}
 
 
@@ -407,7 +402,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         logger.error(f"An error occurred while processing the request: {e}")
         if chat_id:
             # Use background_tasks to add an error handling task
-            background_tasks.add_task(send_error_message_to_user, chat_id, bot_short_name, "Sorry, something went wrong. Please try again later.")
+            background_tasks.add_task(send_error_notification, chat_id, bot_short_name, "Sorry, something went wrong. Please try again later.")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
     return {"status": "Message processed successfully"}
+

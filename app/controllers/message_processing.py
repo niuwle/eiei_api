@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import update_user_credits, get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
+from app.database_operations import get_bot_short_name_by_id, update_user_credits, get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import update_telegram_message, send_telegram_message, send_audio_message, send_voice_note, send_photo_message
 from app.models.message import tbl_msg
@@ -48,7 +48,7 @@ async def process_queue(chat_id: int, bot_id: int, user_id: int,  message_pk: in
     except Exception as e:
         logger.error(f'Error processing queue: {e}')
         await db.rollback()
-        await send_error_notification(chat_id, bot_id, db,'Error: e001')
+        await send_error_notification(chat_id, await get_bot_short_name_by_id(bot_id, db), 'Error: e001')
     finally:
         await db.close()
 
@@ -65,7 +65,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
         response_text = await asyncio.wait_for(get_chat_completion(chat_id, messages[0].bot_id, db), timeout=10)
     except asyncio.TimeoutError:
         logger.error(f"get_chat_completion timed out for chat_id {chat_id}")
-        await send_error_notification(chat_id, bot_id, db,'Error: e002')
+        await send_error_notification(chat_id, await get_bot_short_name_by_id(bot_id, db), db,'Error: e002')
         response_text = None
         
     logger.debug(f"Chat completion response: {response_text}") # Debug statement

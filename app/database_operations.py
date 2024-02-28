@@ -38,6 +38,16 @@ async def get_bot_id_by_short_name(bot_short_name: str, db: AsyncSession) -> int
         return None
 
 
+async def get_bot_short_name_by_id(bot_id: int, db: AsyncSession) -> str:
+    try:
+        query = select(TelegramConfig.bot_short_name).where(TelegramConfig.pk_bot == bot_id)
+        result = await db.execute(query)
+        bot_short_name = result.scalar_one_or_none()
+        return bot_short_name
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_bot_short_name_by_id: {e}")
+        return None
+
 async def add_messages(db: AsyncSession, messages_info: List[dict]) -> List[tbl_msg]:
  
     new_messages = []
@@ -262,7 +272,7 @@ async def insert_user_if_not_exists(db: AsyncSession, user_data: dict) -> bool:
             "chat_id": user_data['chat_id'],
             "credits": Decimal('50'),  
             "transaction_type": "FIRST_TIME_USER",
-            "transaction_date": datetime.utcfromtimestamp(payload_obj.message.date),  # Timestamp of the transaction
+            "transaction_date": datetime.utcfromtimestamp(datetime.now()),  # Timestamp of the transaction
             "pk_payment": None
         }
         # Call the function to update user credits

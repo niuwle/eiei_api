@@ -8,6 +8,7 @@ class tbl_150_user_info(Base):
 
     pk_user_id = Column(Integer, primary_key=True, autoincrement=True)
     id = Column(BigInteger, nullable=False)
+    chat_id = Column(BigInteger, nullable=False)
     is_bot = Column(Boolean, nullable=False)
     first_name = Column(String(255), nullable=False)
     last_name = Column(String(255))
