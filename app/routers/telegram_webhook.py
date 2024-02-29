@@ -333,8 +333,10 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
 
         # Inside your successful payment handling block
-        if 'successful_payment' in payload:
-        #if payload_obj.message and payload_obj.message.successful_payment:
+        if payload_obj.message and payload_obj.message.successful_payment:
+            
+            logger.info(f"Inside your successful payment handling block")
+            
             successful_payment = payload_obj.message.successful_payment
             invoice_payload = successful_payment.invoice_payload  # This is your key to determine the purchase
             
@@ -348,6 +350,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             # Determine the number of credits based on the invoice_payload
             credits_to_add = credits_options.get(invoice_payload, 0)  # Default to 0 if not found
             
+            logger.info(f"credits_to_add {credits_to_add} successful_payment {successful_payment} invoice_payload {invoice_payload}")
             
             payment_info = {
                 "update_id": payload_obj.update_id,

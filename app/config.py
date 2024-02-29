@@ -16,7 +16,7 @@ HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
 ELEVENLABS_KEY = os.getenv("ELEVENLABS_KEY") 
 STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
 
-
+HOST_URL = os.getenv("HOST_URL")
 CREDIT_COST_PHOTO = Decimal(os.getenv("CREDIT_COST_PHOTO", "10"))* Decimal('-1')
 CREDIT_COST_AUDIO = Decimal(os.getenv("CREDIT_COST_AUDIO", "5"))* Decimal('-1')
 CREDIT_COST_TEXT = Decimal(os.getenv("CREDIT_COST_TEXT", "1"))* Decimal('-1')

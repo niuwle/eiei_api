@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends
 from app.controllers import router as api_router
 from app.routers.telegram_webhook import router as telegram_router
+from app.routers.get_image import router as get_image_router
 from app.logging_config import setup_logging
 from fastapi.staticfiles import StaticFiles
 import asyncio
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Include routers
 app.include_router(api_router)
 app.include_router(telegram_router)
+app.include_router(get_image_router)
 
 # Mount static directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
