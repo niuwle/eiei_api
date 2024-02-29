@@ -62,7 +62,7 @@ async def get_photo_filename(requested_photo: str):
     file_info = await get_cached_file_list()
 
     # Generate a list of file names
-    list_of_files = "\n".join([f"{file_name}" for file_name in file_info.keys()])
+    list_of_files = "|".join([f"{file_name}" for file_name in file_info.keys()])
 
     # Construct the prompt with better formatting
     get_photo_filename_prompt = (

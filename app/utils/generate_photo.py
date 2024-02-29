@@ -57,6 +57,7 @@ async def get_photo_url_by_filename(partial_filename: str) -> Optional[str]:
         
         # Construct the final URL
         final_url = f"{HOST_URL}/get-image/{encoded_filename}"
+        logger.info(f"(final_url: {final_url})")
         return final_url
     else:
         logger.error(f"No filename containing '{partial_filename}' was found in cache.")

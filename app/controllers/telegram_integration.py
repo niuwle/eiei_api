@@ -208,13 +208,16 @@ async def send_photo_message(chat_id: int, photo_url: str, bot_token: str) -> bo
     url = f'{TELEGRAM_API_URL}{bot_token}/sendPhoto'
     payload = {"chat_id": chat_id, "photo": photo_url}
 
+    logger.debug(f"Sending photo message to chat_id {chat_id} with photo_url {photo_url}")
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, data=payload)
         response.raise_for_status()
+
+        logger.info(f"Photo message sent successfully to chat_id {chat_id}. Response: {response.json()}")
         return True
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error sending photo message: {e}")
+        logger.error(f"HTTP error sending photo message: {e}. Response: {e.response.text}")
     except Exception as e:
         logger.error(f"Unexpected error in send_photo_message: {str(e)}")
     return False
