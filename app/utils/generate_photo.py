@@ -2,6 +2,7 @@
 import httpx
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import uuid4
 import random
 import asyncio
 from typing import Optional
@@ -9,6 +10,13 @@ from b2sdk.v1 import InMemoryAccountInfo, B2Api
 from app.config import B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, HOST_URL
 from .file_list_cache import get_cached_file_list
 from app.controllers.ai_communication import get_photo_filename
+from datetime import datetime, timedelta
+import os
+import shutil
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+
+TEMP_DIR = "./temp_files"  # Temporary storage directory
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -64,20 +72,75 @@ async def get_photo_url_by_filename(partial_filename: str) -> Optional[str]:
         return None
 
 
-# Example function that uses the get_random_photo_url
+
 async def generate_photo_from_text(text: str) -> Optional[str]:
-    """
-    Generates a signed URL for a random photo from the B2 bucket based on cached file list.
-    """
     try:
-        logger.info(f"generate photo filename from text: {text}")
+        logger.info(f"Generating photo filename from text: {text}")
         file_name = await get_photo_filename(text)
-        logger.info(f"file_name generated: {file_name}")
-        photo_url = await get_photo_url_by_filename(file_name)
-        return photo_url
+        if file_name:
+            logger.info(f"File name generated: {file_name}")
+            temp_file_path = await get_image(file_name)
+            return temp_file_path
+        else:
+            logger.error("No file name returned from get_photo_filename")
     except Exception as e:
-        logger.error(f"Failed to generate photo from text: {str(e)}")
-        return None
+        logger.error(f"Failed to generate photo from text: {e}")
+    return None
+
+async def get_image(file_name: str):
+
+    # Clean up old files in the temp directory before proceeding
+    cleanup_old_temp_files()
+    
+    ensure_temp_dir_exists()
+    temp_file_path = os.path.join(TEMP_DIR, str(uuid4()) + "-" + os.path.basename(file_name))
+
+    info = InMemoryAccountInfo()
+    b2_api = B2Api(info)
+    b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+    bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+    file_name_prefix = file_name
+    valid_duration_in_seconds = 3600
+    b2_authorization_token = bucket.get_download_authorization(file_name_prefix, valid_duration_in_seconds)
+
+    b2_file_url = f"https://f005.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_name}"
+    headers = {"Authorization": b2_authorization_token}
+
+    content_type = "image/jpeg"  # Default to JPEG; adjust as needed
+    if file_name.lower().endswith(".png"):
+        content_type = "image/png"
+    elif file_name.lower().endswith(".gif"):
+        content_type = "image/gif"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(b2_file_url, headers=headers)
+
+        if response.status_code == 200:
+            with open(temp_file_path, "wb") as temp_file:
+                temp_file.write(response.content)
+            
+            # Redirect or serve the file directly here
+            return temp_file_path
+        else:
+            raise HTTPException(status_code=404, detail="File not found or access denied.")
+
+def ensure_temp_dir_exists():
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
+
+def cleanup_old_temp_files():
+    now = datetime.now()
+    threshold = timedelta(seconds=60)  # Files older than this will be deleted
+
+    for filename in os.listdir(TEMP_DIR):
+        file_path = os.path.join(TEMP_DIR, filename)
+        file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+        if now - file_mod_time > threshold:
+            try:
+                os.remove(file_path)
+                logger.info(f"Deleted old temp file: {filename}")
+            except Exception as e:
+                logger.error(f"Failed to delete old temp file: {filename}. Error: {e}")
 
 
 async def generate_photo_from_textFUTURE(text: str, db: AsyncSession) -> Optional[str]:

@@ -56,7 +56,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
     logger.debug(f"Messages to process: {messages}")  # Debug statement
     
     bot_token = await get_bot_token(messages[0].bot_id, db)
-    
+
     await send_typing_action(chat_id, bot_token)
 
     # Mark all messages as processed once
@@ -176,11 +176,11 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
                     pass
 
                 # Retrieve the result of photo generation
-                photo_url = await photo_generation_task
+                photo_temp_path = await photo_generation_task
                     
-                if photo_url:
+                if photo_temp_path:
                     # Send the generated photo URL to the user
-                    await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=bot_token)
+                    await send_photo_message(chat_id=chat_id, photo_temp_path=photo_temp_path, bot_token=bot_token)
 
                     # Prepare the user_credit_info dictionary with necessary details
                     user_credit_info = {
