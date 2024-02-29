@@ -318,8 +318,9 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         # Before the if statement
         logger.debug(f"PreCheckoutQuery data: {payload_obj.pre_checkout_query}")
-
-        if payload_obj.pre_checkout_query:
+        
+        if 'pre_checkout_query' in payload:
+        #if payload_obj.pre_checkout_query:
             pre_checkout_query_id = payload_obj.pre_checkout_query.id
             try:
                 await answer_pre_checkout_query(pre_checkout_query_id, ok=True, bot_token=bot_token)
@@ -332,7 +333,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
 
         # Inside your successful payment handling block
-        if payload_obj.message and payload_obj.message.successful_payment:
+        if 'successful_payment' in payload:
+        #if payload_obj.message and payload_obj.message.successful_payment:
             successful_payment = payload_obj.message.successful_payment
             invoice_payload = successful_payment.invoice_payload  # This is your key to determine the purchase
             
