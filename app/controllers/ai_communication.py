@@ -57,14 +57,12 @@ async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Op
         logger.error(f"Unexpected error in get_chat_completion: {str(e)}")
         return None
 
-
 async def get_photo_filename(requested_photo: str):
     # Refresh the file list cache when needed
     file_info = await get_cached_file_list()
 
-    # Generate a bullet-point list of file names
-    # Assuming file_info is a dict mapping file names to URLs, we list the file names
-    list_of_files = "\n".join([f"• {file_name}" for file_name in file_info.keys()])
+    # Generate a list of file names
+    list_of_files = "\n".join([f"{file_name}" for file_name in file_info.keys()])
 
     # Construct the prompt with better formatting
     get_photo_filename_prompt = (
@@ -76,36 +74,50 @@ async def get_photo_filename(requested_photo: str):
         "Select the file name that best matches the description above. "
         "If more than one could match, order by best match and separate files by semicolon. "
         "If no match at all then reply with the most closest option, always return at least one filename.\n"
+        "YOUR RESPONSE SHOULD ONLY BE THE FILENAME, NOTHING ELSE, THE FILE NAME PERFECLTY WRITEN AS IT WILL BE INPUT IN ANOTHER FUNCTION.\n"
         "Example:\n"
-        "user: Show me a photo of a red car\n"
-        "Response: red_sports_car.jpg\n\n"
+        "User: Show me a photo of a red car\n"
+        "Response:\n"
+        "red_sports_car.jpg\n\n"
         "Example:\n"
-        "user: i like to see nature\n"
-        "Response: yellow_sunflower_field.bmp;sunset_over_mountains.jpg"
+        "User: i like to see nature\n"
+        "Response:\n"
+        "yellow_sunflower_field.bmp;sunset_over_mountains.jpg"
     ).format(requested_photo, list_of_files)
 
-    try:
-        payload = {
-            "model": OPENROUTER_MODEL,
-            "max_tokens": 4024,
-            "messages": [{"role": "system", "content": get_photo_filename_prompt}]
-        }
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "max_tokens": 4024,
+        "messages": [{"role": "system", "content": get_photo_filename_prompt}]
+    }
 
-        logger.debug(f"Sending JSON payload to OpenRouter: {payload}")
+    logger.debug(f"Sending JSON payload to OpenRouter: {payload}")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(OPENROUTER_URL, json=payload, headers={"Authorization": f"Bearer {OPENROUTER_TOKEN}"})
-        response_data = response.json()
+    # Initialize attempt counter
+    attempt = 0
+    max_attempts = 3
+    while attempt < max_attempts:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(OPENROUTER_URL, json=payload, headers={"Authorization": f"Bearer {OPENROUTER_TOKEN}"})
+            response_data = response.json()
 
-        logger.info(f"Received response from OpenRouter: {response_data}")
+            # Check if the response data is not empty
+            response_content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "").replace("•", "").strip()
+            if response_content:
+                logger.info(f"Received response from OpenRouter: {response_data}")
+                return response_content
+            else:
+                attempt += 1
+                logger.warning(f"Empty response received. Retrying... Attempt {attempt}/{max_attempts}")
+                await asyncio.sleep(1)  # Wait for a second before retrying
 
-        return response_data.get("choices", [{}])[0].get("message", {}).get("content", "").replace("•", "").strip()
+        except HTTPError as e:
+            logger.error(f"HTTP error in get_photo_filename: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error in get_photo_filename: {str(e)}")
+            return None
 
-
-    except HTTPError as e:
-        logger.error(f"HTTP error in get_photo_filename: {str(e)}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error in get_photo_filename: {str(e)}")
-        return None
-
+    logger.error("Failed to receive a valid response after 3 attempts.")
+    return None

@@ -135,37 +135,62 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
                     logger.error("Failed to generate audio")
 
 
+        # Check if the user is awaiting photo generation
         elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
-            # Check if the user is awaiting photo generation
-            logger.debug("User is awaiting photo generation")
-            # Clear the awaiting status for photo
-            await clear_awaiting_status(db=db, chat_id=chat_id)
+            # Send "Generating" message and capture its ID
+            success, generating_message_id = await send_telegram_message(chat_id=chat_id, text="Selecting exclusive photo, please wait.", bot_token=bot_token)
+            
+            if success:
+                logger.debug("User is awaiting photo generation")
+                # Clear the awaiting status for photo
+                await clear_awaiting_status(db=db, chat_id=chat_id)
+                # Start photo generation in a background task
+                photo_generation_task = asyncio.create_task(
+                    generate_photo_from_text(text=messages[0].content_text)
+                )
 
+                # Simulate "animation" by updating the message periodically
+                try:
+                    while not photo_generation_task.done():
+                        for i in range(4):
+                            if photo_generation_task.done():
+                                break  # Exit if audio generation completes
+                            new_text = f"Selecting exclusive photo, please wait{'.' * (i % 4)}"
+                            await update_telegram_message(chat_id, generating_message_id, new_text, bot_token)
+                            await asyncio.sleep(1)  # Short delay before the next update
+                except asyncio.CancelledError:
+                    # Handle the case where the task might be cancelled
+                    pass
 
-            photo_url = await generate_photo_from_text(text=response_text)
-            logger.info(f"photo_url generated: {photo_url}")
-            if photo_url:
-                # Send the generated photo URL to the user
-                await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=bot_token)
+                # Retrieve the result of photo generation
+                photo_url = await photo_generation_task
+                    
+                if photo_url:
+                    # Send the generated photo URL to the user
+                    await send_photo_message(chat_id=chat_id, photo_url=photo_url, bot_token=bot_token)
 
-                # Prepare the user_credit_info dictionary with necessary details
-                user_credit_info = {
-                    "channel": "TELEGRAM",
-                    "pk_bot": messages[0].bot_id,
-                    "user_id": user_id,
-                    "chat_id": chat_id,
-                    "credits": CREDIT_COST_PHOTO,
-                    "transaction_type": "PHOTO_GEN",  
-                    "transaction_date": datetime.utcnow(),
-                    "pk_payment": None
-                }
+                    # Prepare the user_credit_info dictionary with necessary details
+                    user_credit_info = {
+                        "channel": "TELEGRAM",
+                        "pk_bot": messages[0].bot_id,
+                        "user_id": user_id,
+                        "chat_id": chat_id,
+                        "credits": CREDIT_COST_PHOTO,
+                        "transaction_type": "PHOTO_GEN",  
+                        "transaction_date": datetime.utcnow(),
+                        "pk_payment": None
+                    }
 
-                # Call update_user_credits to apply the credit change
-                await update_user_credits(db, user_credit_info)
-
-            else:
-                # If photo generation failed, inform the user
-                await send_telegram_message(chat_id=chat_id, text="Sorry, I couldn't generate a photo from the description provided. Please try again.", bot_token=await get_bot_token(messages[0].bot_id, db))
+                    # Call update_user_credits to apply the credit change
+                    await update_user_credits(db, user_credit_info)
+                    
+                    # Update to inform the user that the audio was generated successfully
+                    await update_telegram_message(chat_id, generating_message_id, "Photo selected successfully.", bot_token)
+                else:
+                    # If audio generation failed, inform the user
+                    final_message = "Sorry, I couldn't generate a photo from the description provided. Please try again."
+                    await update_telegram_message(chat_id, generating_message_id, final_message, bot_token)
+                    logger.error("Failed to generate photo")
 
 
         else:

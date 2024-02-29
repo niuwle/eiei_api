@@ -69,7 +69,9 @@ async def generate_photo_from_text(text: str) -> Optional[str]:
     Generates a signed URL for a random photo from the B2 bucket based on cached file list.
     """
     try:
+        logger.info(f"generate photo filename from text: {text}")
         file_name = await get_photo_filename(text)
+        logger.info(f"file_name generated: {file_name}")
         photo_url = await get_photo_url_by_filename(file_name)
         return photo_url
     except Exception as e:

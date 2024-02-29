@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
-    insert_user_if_not_exists, is_user_banned, add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
+    check_if_chat_is_awaiting, insert_user_if_not_exists, is_user_banned, add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
 )
 from app.controllers.telegram_integration import send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
@@ -115,8 +115,20 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             await send_telegram_message(chat_id, predefined_response_text, await get_bot_token(bot_id, db))
             text_prefix = predefined_response_text
         else:
-            process_task = process_queue
-            task_params = {'chat_id': chat_id, 'bot_id': bot_id,'user_id': user_id, 'db': db}  # common parameters for process_queue
+            # Before deciding on the generic process_task, check if the chat is awaiting specific input
+            if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
+                text_prefix = f"[USER REQUESTED AUDIO] {message_data.text}"
+                # Adjust process_task and task_params as needed for AUDIO processing
+                process_task = process_queue  
+                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+            elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
+                text_prefix = f"[USER REQUESTED PHOTO] {message_data.text}"
+                # Adjust process_task and task_params as needed for PHOTO processing
+                process_task = process_queue  
+                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+            else:
+                process_task = process_queue
+                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
 
     elif message_data.photo:
         message_type = 'PHOTO'
