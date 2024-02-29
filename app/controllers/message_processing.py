@@ -70,6 +70,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
         
     logger.debug(f"Chat completion response: {response_text}") # Debug statement
 
+
     if response_text:
 
         bot_token = await get_bot_token(messages[0].bot_id, db)
@@ -139,6 +140,8 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
             logger.debug("User is awaiting photo generation")
             # Clear the awaiting status for photo
             await clear_awaiting_status(db=db, chat_id=chat_id)
+
+
             photo_url = await generate_photo_from_text(text=response_text)
             logger.info(f"photo_url generated: {photo_url}")
             if photo_url:
@@ -166,6 +169,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
 
 
         else:
+
                 
             # Apply humanization to the response text
             humanized_response = humanize_response(response_text)

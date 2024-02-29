@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 from app.utils.file_list_cache import get_cached_file_list
 
+from app.controllers.ai_communication import get_photo_filename
 setup_logging()
 app = FastAPI()
 
@@ -26,5 +27,7 @@ async def startup_event():
     # Print the refreshed file list
     logger.info("Cache initialized with the following files:")
     
-    for file_url in file_list:
-        logger.info(file_url)
+    # for file_url in file_list:
+    #     logger.info(file_url)
+# 
+    # logger.info("test function "+await get_photo_filename("show me a red car"))

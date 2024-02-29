@@ -1,15 +1,15 @@
-from b2sdk.v1 import InMemoryAccountInfo, B2Api
-from app.config import B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME
+# app/utils/file_list_cache.py
 import logging
 from datetime import datetime, timedelta
-import asyncio
+from b2sdk.v1 import InMemoryAccountInfo, B2Api
+from app.config import B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 # Cache structure
 cache = {
-    "file_info": {},  # Changed to a dictionary to map file paths to URLs
+    "file_info": {},  # Now maps file paths to file IDs
     "last_update": datetime.min
 }
 
@@ -23,18 +23,17 @@ async def refresh_file_list():
     b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
     bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
 
-    # Initialize an empty dictionary to store file paths and their URLs
+    # Initialize an empty dictionary to store file paths and their file IDs
     file_info = {}
 
     # Fetch file list from B2 bucket
-    for file_version, _ in bucket.ls(show_versions=False):
-        # Generate the full URL for each file
-        file_url = b2_api.get_download_url_for_fileid(file_version.id_)
-        # Map the file path to its download URL
-        file_info[file_version.file_name] = file_url
+    for file_version, _ in bucket.ls(show_versions=False, recursive=True):
+        # Instead of generating a URL, store the file ID
+        file_info[file_version.file_name] = file_version.id_
 
-    logger.info(f"Refreshed file info from B2: {file_info}")
+    logger.info("Refreshed file info from B2.")
     return file_info
+
 
 async def get_cached_file_list():
     now = datetime.now()

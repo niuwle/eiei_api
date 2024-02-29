@@ -8,6 +8,7 @@ from typing import Optional
 from b2sdk.v1 import InMemoryAccountInfo, B2Api
 from app.config import B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME
 from .file_list_cache import get_cached_file_list
+from app.controllers.ai_communication import get_photo_filename
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -39,13 +40,47 @@ async def get_random_photo_url() -> Optional[str]:
     # Generate and return the signed URL
     return await generate_signed_url(file_id)
 
+
+async def get_photo_url_by_filename(partial_filename: str) -> Optional[str]:
+    file_info = await get_cached_file_list()
+    if not file_info:
+        logger.error("No file info available in cache.")
+        return None
+
+    closest_match = None
+    closest_match_len_difference = float('inf')
+
+    # Search for the closest match based on the partial filename
+    for filename in file_info.keys():
+        # Check if the partial filename is part of the actual filename
+        if partial_filename in filename:
+            # Calculate the difference in length between the search term and the candidate filename
+            len_difference = len(filename) - len(partial_filename)
+            
+            # Update the closest match if this filename is a closer match
+            if len_difference < closest_match_len_difference:
+                closest_match = filename
+                closest_match_len_difference = len_difference
+
+    # If a match was found, use it
+    if closest_match:
+        file_id = file_info[closest_match]
+        logger.info(f"Selected file ID for closest match to '{partial_filename}': {file_id} (Matched filename: {closest_match})")
+        
+        # Generate and return the signed URL for the found file ID
+        return await generate_signed_url(file_id)
+    else:
+        logger.error(f"No filename containing '{partial_filename}' was found in cache.")
+        return None
+
 # Example function that uses the get_random_photo_url
 async def generate_photo_from_text(text: str) -> Optional[str]:
     """
     Generates a signed URL for a random photo from the B2 bucket based on cached file list.
     """
     try:
-        photo_url = await get_random_photo_url()
+        file_name = await get_photo_filename(text)
+        photo_url = await get_photo_url_by_filename(file_name)
         return photo_url
     except Exception as e:
         logger.error(f"Failed to generate photo from text: {str(e)}")
@@ -94,3 +129,4 @@ async def generate_photo_from_textFUTURE(text: str, db: AsyncSession) -> Optiona
 
     # Return None if there was an error
     return None
+
