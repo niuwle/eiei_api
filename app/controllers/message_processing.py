@@ -52,25 +52,35 @@ async def process_queue(chat_id: int, bot_id: int, user_id: int,  message_pk: in
     finally:
         await db.close()
 
-
 async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder_pk: int):
-    logger.debug(f"Messages to process: {messages}") # Debug statement
+    logger.debug(f"Messages to process: {messages}")  # Debug statement
 
     # Mark all messages as processed once
     for message in messages:
         await mark_message_status(db, message.pk_messages, 'P')
 
-    # Get chat completion only once
-    try:
-        response_text = await asyncio.wait_for(get_chat_completion(chat_id, messages[0].bot_id, db), timeout=10)
-    except asyncio.TimeoutError:
-        logger.error(f"get_chat_completion timed out for chat_id {chat_id}")
-        await send_error_notification(chat_id, await get_bot_short_name_by_id(bot_id, db), db,'Error: e002')
-        response_text = None
-        
-    logger.debug(f"Chat completion response: {response_text}") # Debug statement
+    response_text = None
+    retries = 3  # Maximum number of retries
 
+    for attempt in range(retries + 1):  # Attempt up to 3 retries
+        try:
+            response_text = await asyncio.wait_for(get_chat_completion(chat_id, messages[0].bot_id, db), timeout=10)
+            if response_text:
+                break  # Break the loop if response_text is not empty
+        except asyncio.TimeoutError:
+            logger.error(f"get_chat_completion timed out for chat_id {chat_id}, attempt {attempt + 1}")
 
+        if attempt < retries:  # Wait before retrying, unless it's the last attempt
+            await asyncio.sleep(2)  # Wait for 2 seconds before retrying
+
+    # Check if response_text is still None after retries
+    if not response_text:
+        logger.error(f"Failed to get chat completion response after {retries} retries for chat_id {chat_id}")
+        await send_error_notification(chat_id, await get_bot_short_name_by_id(bot_id, db), 'Error: e002')
+    else:
+        logger.debug(f"Chat completion response: {response_text}")  # Debug statement
+     
+     
     if response_text:
 
         bot_token = await get_bot_token(messages[0].bot_id, db)
