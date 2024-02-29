@@ -37,6 +37,12 @@ async def get_image(background_tasks: BackgroundTasks, file_name: str):
     b2_file_url = f"https://f005.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_name}"
     headers = {"Authorization": b2_authorization_token}
 
+    content_type = "image/jpeg"  # Default to JPEG; adjust as needed
+    if file_name.lower().endswith(".png"):
+        content_type = "image/png"
+    elif file_name.lower().endswith(".gif"):
+        content_type = "image/gif"
+
     async with httpx.AsyncClient() as client:
         response = await client.get(b2_file_url, headers=headers)
 
@@ -48,7 +54,7 @@ async def get_image(background_tasks: BackgroundTasks, file_name: str):
             background_tasks.add_task(delete_temp_file, temp_file_path, delay=60)
             
             # Redirect or serve the file directly here
-            return FileResponse(path=temp_file_path, filename=file_name)
+            return FileResponse(path=temp_file_path, media_type=content_type, filename=file_name)
         else:
             raise HTTPException(status_code=404, detail="File not found or access denied.")
 

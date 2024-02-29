@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database_operations import get_bot_short_name_by_id, update_user_credits, get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
 from app.controllers.ai_communication import get_chat_completion
-from app.controllers.telegram_integration import update_telegram_message, send_telegram_message, send_audio_message, send_voice_note, send_photo_message
+from app.controllers.telegram_integration import send_typing_action, update_telegram_message, send_telegram_message, send_audio_message, send_voice_note, send_photo_message
 from app.models.message import tbl_msg
 from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
@@ -54,6 +54,10 @@ async def process_queue(chat_id: int, bot_id: int, user_id: int,  message_pk: in
 
 async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder_pk: int):
     logger.debug(f"Messages to process: {messages}")  # Debug statement
+    
+    bot_token = await get_bot_token(messages[0].bot_id, db)
+    
+    await send_typing_action(chat_id, bot_token)
 
     # Mark all messages as processed once
     for message in messages:
@@ -80,10 +84,9 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
     else:
         logger.debug(f"Chat completion response: {response_text}")  # Debug statement
      
-     
+
     if response_text:
 
-        bot_token = await get_bot_token(messages[0].bot_id, db)
 
         logger.debug(f"chat_id1234: {chat_id}") # Debug statement
         # Check if the user is awaiting audio generation
