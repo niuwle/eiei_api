@@ -87,42 +87,66 @@ async def generate_photo_from_text(text: str) -> Optional[str]:
         logger.error(f"Failed to generate photo from text: {e}")
     return None
 
-async def get_image(file_name: str):
+async def get_image(partial_filename: str):
 
     # Clean up old files in the temp directory before proceeding
     cleanup_old_temp_files()
-    
-    ensure_temp_dir_exists()
-    temp_file_path = os.path.join(TEMP_DIR, str(uuid4()) + "-" + os.path.basename(file_name))
 
-    info = InMemoryAccountInfo()
-    b2_api = B2Api(info)
-    b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
-    bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
-    file_name_prefix = file_name
-    valid_duration_in_seconds = 3600
-    b2_authorization_token = bucket.get_download_authorization(file_name_prefix, valid_duration_in_seconds)
+    file_info = await get_cached_file_list()
+    if not file_info:
+        logger.error("No file info available in cache.")
+        return None
 
-    b2_file_url = f"https://f005.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_name}"
-    headers = {"Authorization": b2_authorization_token}
+    closest_match = None
+    closest_match_len_difference = float('inf')
 
-    content_type = "image/jpeg"  # Default to JPEG; adjust as needed
-    if file_name.lower().endswith(".png"):
-        content_type = "image/png"
-    elif file_name.lower().endswith(".gif"):
-        content_type = "image/gif"
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(b2_file_url, headers=headers)
-
-        if response.status_code == 200:
-            with open(temp_file_path, "wb") as temp_file:
-                temp_file.write(response.content)
+    # Search for the closest match based on the partial filename
+    for filename in file_info.keys():
+        # Check if the partial filename is part of the actual filename
+        if partial_filename in filename:
+            # Calculate the difference in length between the search term and the candidate filename
+            len_difference = len(filename) - len(partial_filename)
             
-            # Redirect or serve the file directly here
-            return temp_file_path
-        else:
-            raise HTTPException(status_code=404, detail="File not found or access denied.")
+            # Update the closest match if this filename is a closer match
+            if len_difference < closest_match_len_difference:
+                closest_match = filename
+                closest_match_len_difference = len_difference
+
+    # If a match was found, use it
+    if closest_match:
+        logger.info(f"(Matched filename: {closest_match})")
+
+        ensure_temp_dir_exists()
+        temp_file_path = os.path.join(TEMP_DIR, str(uuid4()) + "-" + os.path.basename(closest_match))
+
+
+        info = InMemoryAccountInfo()
+        b2_api = B2Api(info)
+        b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+        bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+        file_name_prefix = closest_match
+        valid_duration_in_seconds = 3600
+        b2_authorization_token = bucket.get_download_authorization(file_name_prefix, valid_duration_in_seconds)
+
+        b2_file_url = f"https://f005.backblazeb2.com/file/{B2_BUCKET_NAME}/{closest_match}"
+        headers = {"Authorization": b2_authorization_token}
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(b2_file_url, headers=headers)
+
+            if response.status_code == 200:
+                with open(temp_file_path, "wb") as temp_file:
+                    temp_file.write(response.content)
+                
+                # Redirect or serve the file directly here
+                return temp_file_path
+            else:
+                raise HTTPException(status_code=404, detail="File not found or access denied.")
+
+    else:
+        logger.error(f"No filename containing '{partial_filename}' was found in cache.")
+        return None
+
 
 def ensure_temp_dir_exists():
     if not os.path.exists(TEMP_DIR):
