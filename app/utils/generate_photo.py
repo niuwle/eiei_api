@@ -89,6 +89,7 @@ async def generate_photo_from_text(text: str) -> Optional[str]:
 
 async def get_image(partial_filename: str):
 
+    ensure_temp_dir_exists()
     # Clean up old files in the temp directory before proceeding
     cleanup_old_temp_files()
 
@@ -116,7 +117,6 @@ async def get_image(partial_filename: str):
     if closest_match:
         logger.info(f"(Matched filename: {closest_match})")
 
-        ensure_temp_dir_exists()
         temp_file_path = os.path.join(TEMP_DIR, str(uuid4()) + "-" + os.path.basename(closest_match))
 
 
