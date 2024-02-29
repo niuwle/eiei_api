@@ -89,7 +89,7 @@ class TelegramWebhookPayload(BaseModel):
     callback_query: Optional[CallbackQuery] = None
     pre_checkout_query: Optional[PreCheckoutQuery] = None
     # Ensure SuccessfulPayment is defined in your models
-    successful_payment: Optional[SuccessfulPayment] = None
+    #successful_payment: Optional[SuccessfulPayment] = None
     
 
 router = APIRouter()
@@ -374,8 +374,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 
 
             user_credit_info = {
-                "channel": "TELEGRAM",  # Or however you determine the channel
-                "pk_bot": bot_id,  # Assuming you've retrieved this earlier
+                "channel": "TELEGRAM",
+                "pk_bot": bot_id,
                 "user_id": payload_obj.message.from_.get('id'),
                 "chat_id": payload_obj.message.chat.get('id'),
                 "credits": credits_to_add,  # The number of credits to add
