@@ -282,7 +282,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 await send_credit_purchase_options(chat_id, bot_token)
            
             if data == "reset_yes":
-                await reset_messages_by_chat_id(chat_id, bot_token)
+                await reset_messages_by_chat_id(db=db, chat_id)
                 predefined_response_text = "Hi I'm Tabatha! What about you?"
                 await send_telegram_message(chat_id=chat_id,  text=predefined_response_text, bot_token=bot_token)
 
