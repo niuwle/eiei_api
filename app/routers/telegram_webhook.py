@@ -9,7 +9,7 @@ from app.database import get_db
 from app.database_operations import (
     check_if_chat_is_awaiting, insert_user_if_not_exists, is_user_banned, add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
 )
-from app.controllers.telegram_integration import send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
+from app.controllers.telegram_integration import send_reset_options, send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
 from app.utils.process_audio import transcribe_audio
 from app.utils.process_photo import caption_photo
