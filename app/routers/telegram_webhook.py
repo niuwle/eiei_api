@@ -184,7 +184,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
         bot_token = await get_bot_token(bot_id, db)
 
-        if payload_obj.message and payload_obj.message.from_:
+        if payload_obj.message and payload_obj.message.text not in ['/payment', '/credits'] and payload_obj.message.from_:
+ 
             chat_id = payload_obj.message.chat.get('id')
             user_id = payload_obj.message.from_.get('id')
             

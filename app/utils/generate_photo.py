@@ -181,6 +181,8 @@ def find_best_match(filenames, search_key):
 
     # Compile all matches, with priority given to exact, regex, prefix/suffix, then fuzzy matches
     all_matches = exact_matches + regex_matches + prefix_suffix_matches + fuzzy_matches
+
+    logger.info(f"all_matches 1: {all_matches}")
     return all_matches
 
 def simplified_fuzzy_match(search_key, filename):
