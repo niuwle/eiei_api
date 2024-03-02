@@ -228,7 +228,7 @@ async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str)
     except Exception as e:
         logger.error(f"Unexpected error in send_photo_message: {str(e)}")
     return False
-    
+
 async def send_generate_options(chat_id: int, bot_token: str):
     
     keyboard = {
@@ -266,6 +266,31 @@ async def send_credit_purchase_options(chat_id: int, bot_token: str):
     }
     
     text = ("🔥 Ignite your desires with exclusive access. Choose your pleasure:")
+    
+    # Payload for the sendMessage request with the inline keyboard
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    
+    # API endpoint URL
+    url = f"{TELEGRAM_API_URL}{bot_token}/sendMessage"
+    
+    # Sending the message with the inline keyboard to the user
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload)
+        
+        # Optional: Check response status and handle potential errors
+        if response.status_code != 200:
+            logger.error(f"Failed to send credit purchase options. Response: {response.text}")
+
+async def send_reset_options(chat_id: int, bot_token: str):
+    
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "Yes", "callback_data": "reset_yes"}],
+            [{"text": "No", "callback_data": ""}]
+        ]
+    }
+    
+    text = ("This will reset your chat history and will wipe all the bot memory. Your credits will remain. Are you sure?")
     
     # Payload for the sendMessage request with the inline keyboard
     payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}

@@ -281,6 +281,11 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             if data == "ask_credit":
                 await send_credit_purchase_options(chat_id, bot_token)
            
+            if data == "reset_yes":
+                await reset_messages_by_chat_id(chat_id, bot_token)
+                predefined_response_text = "Hi I'm Tabatha! What about you?"
+                await send_telegram_message(chat_id=chat_id,  text=predefined_response_text, bot_token=bot_token)
+
             return {"status": "Callback query processed successfully"}
 
 
@@ -322,10 +327,16 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_id))
             return {"status": "Credits information sent"}
             
+            
         if payload_obj.message and payload_obj.message.text == "/payment":
             
             await send_credit_purchase_options(chat_id, bot_token)
             return {"status": "Payment command processed"}
+
+        if payload_obj.message and payload_obj.message.text == "/reset":
+            
+            await send_reset_options(chat_id, bot_token)
+            return {"status": "Send reset command processed"}
 
 
         # Before the if statement
