@@ -22,7 +22,6 @@ CREDIT_COST_AUDIO = Decimal(os.getenv("CREDIT_COST_AUDIO", "5"))* Decimal('-1')
 CREDIT_COST_TEXT = Decimal(os.getenv("CREDIT_COST_TEXT", "1"))* Decimal('-1')
 
 
-
 B2_APPLICATION_KEY_ID = os.getenv("B2_APPLICATION_KEY_ID") 
 B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY")
 B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")

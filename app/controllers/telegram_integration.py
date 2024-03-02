@@ -1,7 +1,7 @@
 # ./app/controllers/telegram_integration.py
 import httpx
 import logging
-from app.config import TELEGRAM_API_URL, STRIPE_API_KEY
+from app.config import TELEGRAM_API_URL, STRIPE_API_KEY, CREDIT_COST_PHOTO, CREDIT_COST_AUDIO
 from app.database_operations import get_latest_total_credits
 from decimal import Decimal
 import asyncio
@@ -230,14 +230,15 @@ async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str)
     return False
 
 async def send_generate_options(chat_id: int, bot_token: str):
-    
+ 
     keyboard = {
         "inline_keyboard": [
-            [{"text": "📸 See Me - Choose and describe your perfect photo of me.", "callback_data": "generate_photo"}],
-            [{"text": "🔊 Hear Me - Pick and tell me what sweet nothings you'd like to hear.", "callback_data": "generate_audio"}]
+            [{"text": f"📸 See Me - (Cost {CREDIT_COST_PHOTO} Credits)", "callback_data": "generate_photo"}],
+            [{"text": f"🔊 Hear Me - (Cost {CREDIT_COST_AUDIO} Credits)", "callback_data": "generate_audio"}]
         ]
     }
-    text = "💕 Let's make this moment special. 💕"
+
+    text = f"💕 Let's make this moment special. 💕 \n\n📸 See Me - Choose and describe your perfect photo of me. \n\n🔊 Hear Me - Pick and tell me what sweet nothings you'd like to hear."
     payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
     url = f"{TELEGRAM_API_URL}{bot_token}/sendMessage"
     async with httpx.AsyncClient() as client:
