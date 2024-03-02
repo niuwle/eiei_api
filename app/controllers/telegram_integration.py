@@ -286,7 +286,7 @@ async def send_reset_options(chat_id: int, bot_token: str):
     keyboard = {
         "inline_keyboard": [
             [{"text": "Yes", "callback_data": "reset_yes"}],
-            [{"text": "No", "callback_data": ""}]
+            [{"text": "No", "callback_data": "reset_no"}]
         ]
     }
     
@@ -304,7 +304,7 @@ async def send_reset_options(chat_id: int, bot_token: str):
         
         # Optional: Check response status and handle potential errors
         if response.status_code != 200:
-            logger.error(f"Failed to send credit purchase options. Response: {response.text}")
+            logger.error(f"Failed to send reset options. Response: {response.text}")
 
 async def answer_pre_checkout_query(pre_checkout_query_id: str, ok: bool, bot_token: str, error_message: str = None):
     url = f'{TELEGRAM_API_URL}{bot_token}/answerPreCheckoutQuery'
