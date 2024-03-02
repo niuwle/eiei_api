@@ -184,47 +184,6 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         bot_id = await get_bot_id_by_short_name(bot_short_name, db)
         bot_token = await get_bot_token(bot_id, db)
 
-        if payload_obj.message and payload_obj.message.text not in ['/payment', '/credits'] and payload_obj.message.from_:
- 
-            chat_id = payload_obj.message.chat.get('id')
-            user_id = payload_obj.message.from_.get('id')
-            
-            # Perform the credit check after determining user_id and chat_id
-            total_credits = await get_latest_total_credits(db=db, user_id=user_id, bot_id=bot_id)
-            if total_credits < Decimal('0'):
-                # User does not have enough credits, send a message and stop further processing
-                await send_telegram_message(chat_id, "You don't have enough credits to perform this operation.", bot_token)
-                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=total_credits)
-                return {"status": "Insufficient credits"}
-            # Use the username as a fallback for last_name if last_name is not provided
-            last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
-            user_data = {
-                'id': payload_obj.message.from_.get('id'),
-                'channel': 'TELEGRAM',
-                'is_bot': payload_obj.message.from_.get('is_bot', False),
-                'first_name': payload_obj.message.from_.get('first_name', ''),
-                'last_name': payload_obj.message.from_.get('last_name', ''),  
-                'username': payload_obj.message.from_.get('username', ''),  # Optional, defaulting to empty string as it's not provided
-                'language_code': payload_obj.message.from_.get('language_code', ''),  # Optional, using .get() in case it's not present
-                'is_premium': False,  # Optional, defaulting to False as it's not provided
-                'pk_bot': bot_id,  # Adding the bot_id as pk_bot
-                'chat_id': chat_id  # Adding chat_id
-            }
-
-            # Insert the user if not exists and check if banned
-            inserted = await insert_user_if_not_exists(db, user_data)
-            if inserted:
-                logger.info(f"User {user_data['id']} inserted.")
-            else:
-                logger.info(f"User {user_data['id']} already exists.")
-
-            if await is_user_banned(db, user_data['id'],bot_id , 'TELEGRAM'):
-
-                await send_error_notification(chat_id, bot_short_name, "Your account is banned.")
-                
-                return {"status": "User is banned"}
-
-
         # Handling callback_query for inline keyboard responses
         if 'callback_query' in payload:
             callback_query = payload['callback_query']
@@ -429,6 +388,47 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 logger.error(f"Failed to process successful payment for chat_id {payload_obj.message.chat['id']}: {e}")
 
             return {"status": "Payment confirmed "}
+
+
+        if payload_obj.message and payload_obj.message.text not in ['/payment','/start', '/credits'] and payload_obj.message.from_:
+ 
+            chat_id = payload_obj.message.chat.get('id')
+            user_id = payload_obj.message.from_.get('id')
+            
+            # Perform the credit check after determining user_id and chat_id
+            total_credits = await get_latest_total_credits(db=db, user_id=user_id, bot_id=bot_id)
+            if total_credits < Decimal('0'):
+                # User does not have enough credits, send a message and stop further processing
+                await send_telegram_message(chat_id, "You don't have enough credits to perform this operation.", bot_token)
+                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=total_credits)
+                return {"status": "Insufficient credits"}
+            # Use the username as a fallback for last_name if last_name is not provided
+            last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
+            user_data = {
+                'id': payload_obj.message.from_.get('id'),
+                'channel': 'TELEGRAM',
+                'is_bot': payload_obj.message.from_.get('is_bot', False),
+                'first_name': payload_obj.message.from_.get('first_name', ''),
+                'last_name': payload_obj.message.from_.get('last_name', ''),  
+                'username': payload_obj.message.from_.get('username', ''),  # Optional, defaulting to empty string as it's not provided
+                'language_code': payload_obj.message.from_.get('language_code', ''),  # Optional, using .get() in case it's not present
+                'is_premium': False,  # Optional, defaulting to False as it's not provided
+                'pk_bot': bot_id,  # Adding the bot_id as pk_bot
+                'chat_id': chat_id  # Adding chat_id
+            }
+
+            # Insert the user if not exists and check if banned
+            inserted = await insert_user_if_not_exists(db, user_data)
+            if inserted:
+                logger.info(f"User {user_data['id']} inserted.")
+            else:
+                logger.info(f"User {user_data['id']} already exists.")
+
+            if await is_user_banned(db, user_data['id'],bot_id , 'TELEGRAM'):
+
+                await send_error_notification(chat_id, bot_short_name, "Your account is banned.")
+                
+                return {"status": "User is banned"}
 
 
         logger.info(f"Incoming payload is not a special case, procesing with handling of chat messages")
