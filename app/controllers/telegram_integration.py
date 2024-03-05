@@ -23,6 +23,7 @@ async def update_telegram_message(chat_id: int, message_id: int, new_text: str, 
     Returns:
     - bool: True if the message content was updated successfully, False otherwise.
     """
+    logger.debug(f"update_telegram_message with bot_token: {bot_token}")
     url = f'{TELEGRAM_API_URL}{bot_token}/editMessageText'
     payload = {
         "chat_id": chat_id,
@@ -55,6 +56,7 @@ async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> Tupl
     - Tuple[bool, int]: A tuple containing a boolean indicating if the message was sent successfully and the message ID.
     """
     # Send 'typing' action
+    logger.debug(f"send_telegram_message with bot_token: {bot_token}")
     await send_typing_action(chat_id, bot_token)
 
     # Calculate delay based on the length of the message
@@ -80,6 +82,7 @@ async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> Tupl
 
 async def send_telegram_error_message(chat_id: int, text: str, bot_token: str) -> bool:
     
+    logger.debug(f"send_telegram_error_message with bot_token: {bot_token}")
     url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
     payload = {"chat_id": chat_id, "text": text}
 
@@ -95,6 +98,7 @@ async def send_telegram_error_message(chat_id: int, text: str, bot_token: str) -
     return False
 
 async def send_typing_action(chat_id: int, bot_token: str) -> bool:
+    logger.debug(f"send_typing_action with bot_token: {bot_token}")
     url = f'{TELEGRAM_API_URL}{bot_token}/sendChatAction'
     payload = {"chat_id": chat_id, "action": "typing"}
 
@@ -129,6 +133,7 @@ async def send_audio_message(chat_id: int, audio_file_path: str, bot_token: str)
     Returns:
     - bool: True if the message was sent successfully, False otherwise.
     """
+    logger.debug(f"send_audio_message with bot_token: {bot_token}")
     url = f'{TELEGRAM_API_URL}{bot_token}/sendAudio'
     files = {'audio': open(audio_file_path, 'rb')}
 
@@ -167,6 +172,7 @@ async def send_voice_note(chat_id: int, audio_file_path: str, bot_token: str) ->
     Returns:
     - bool: True if the voice note was sent successfully, False otherwise.
     """
+    logger.debug(f"send_voice_note with bot_token: {bot_token}")
     url = f'{TELEGRAM_API_URL}{bot_token}/sendVoice'
     files = {'voice': open(audio_file_path, 'rb')}
 
@@ -205,6 +211,7 @@ async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str)
     Returns:
     - bool: True if the message was sent successfully, False otherwise.
     """
+    logger.debug(f"send_photo_message with bot_token: {bot_token}")
     url = f'https://api.telegram.org/bot{bot_token}/sendPhoto'
 
     # Ensure the file at the path exists and can be opened
