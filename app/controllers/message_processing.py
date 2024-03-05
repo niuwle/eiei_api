@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import get_bot_short_name_by_id, update_user_credits, get_bot_token, add_messages, mark_message_status, update_message_content, check_if_chat_is_awaiting, clear_awaiting_status
+from app.database_operations import update_user_credits, get_bot_config, add_messages,  update_message, check_if_chat_is_awaiting, manage_awaiting_status
 from app.controllers.ai_communication import get_chat_completion
 from app.controllers.telegram_integration import send_typing_action, update_telegram_message, send_telegram_message, send_audio_message, send_voice_note, send_photo_message
 from app.models.message import tbl_msg
@@ -48,21 +48,23 @@ async def process_queue(chat_id: int, bot_id: int, user_id: int,  message_pk: in
     except Exception as e:
         logger.error(f'Error processing queue: {e}')
         await db.rollback()
-        await send_error_notification(chat_id, await get_bot_short_name_by_id(bot_id, db), 'Error: e001')
+        await send_error_notification(chat_id, await get_bot_config(db,return_type='short_name',bot_id=bot_id), 'Error: e001')
     finally:
         await db.close()
 
 async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder_pk: int):
     logger.debug(f"Messages to process: {messages}")  # Debug statement
     
-    bot_token = await get_bot_token(messages[0].bot_id, db)
+    bot_token = await get_bot_config(db,  return_type='token', bot_id=messages[0].bot_id)
+
+    logger.debug(f"messages[0].bot_id new catch: {messages[0].bot_id}") # Debug statement
+    logger.debug(f"bot_token new catch: {bot_token}") # Debug statement
 
     await send_typing_action(chat_id, bot_token)
 
     # Mark all messages as processed once
     for message in messages:
-        await mark_message_status(db, message.pk_messages, 'P')
-
+        await update_message(db, message_pk=message.pk_messages, new_status="P")
     response_text = None
     retries = 3  # Maximum number of retries
 
@@ -80,7 +82,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
     # Check if response_text is still None after retries
     if not response_text:
         logger.error(f"Failed to get chat completion response after {retries} retries for chat_id {chat_id}")
-        await send_error_notification(chat_id, await get_bot_short_name_by_id(bot_id, db), 'Error: e002')
+        await send_error_notification(chat_id, await get_bot_config(db,return_type='short_name',bot_id=bot_id), 'Error: e002')
     else:
         logger.debug(f"Chat completion response: {response_text}")  # Debug statement
      
@@ -97,7 +99,8 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
             if success:
                 logger.debug(f"user is awaiting audio generation")  # Debug statement
                 # Clear the awaiting status, as we start processing
-                await clear_awaiting_status(db=db, chat_id=chat_id)
+                await manage_awaiting_status(db, chat_id=chat_id,  action='REMOVE')
+
 
                 # Start audio generation in a background task
                 audio_generation_task = asyncio.create_task(
@@ -156,7 +159,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
             if success:
                 logger.debug("User is awaiting photo generation")
                 # Clear the awaiting status for photo
-                await clear_awaiting_status(db=db, chat_id=chat_id)
+                await manage_awaiting_status(db, chat_id=chat_id,  action='REMOVE')
                 # Start photo generation in a background task
                 photo_generation_task = asyncio.create_task(
                     generate_photo_from_text(text=messages[0].content_text)
@@ -219,13 +222,12 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
 
 
         # Use the updated add_message function to save the response
-        # await add_message(db, response_message_data, type='TEXT', is_processed='Y', role='ASSISTANT')
-        await update_message_content(db, ai_placeholder_pk, response_text)
-        await mark_message_status(db, ai_placeholder_pk, 'Y')
+        await update_message(db, message_pk=ai_placeholder_pk, new_content=response_text)
+        await update_message(db, message_pk=ai_placeholder_pk, new_status="Y")
 
         # Mark all messages as processed again
         for message in messages:
-            await mark_message_status(db, message.pk_messages, 'Y')
+            await update_message(db, message_pk=message.pk_messages, new_status="Y")
 
         # Prepare the user_credit_info dictionary with necessary details
         user_credit_info = {
@@ -245,7 +247,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
 
         # Response was not getted so we mark for reprocesing later
         for message in messages:
-            await mark_message_status(db, message.pk_messages, 'N')
+            await update_message(db, message_pk=message.pk_messages, new_status="N")
 
     # Log the count of records processed
     logger.info(f"{len(messages)} messages processed for chat_id {chat_id}") 

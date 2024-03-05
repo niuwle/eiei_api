@@ -38,7 +38,7 @@ async def update_telegram_message(chat_id: int, message_id: int, new_text: str, 
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error updating message content: {e}")
     except Exception as e:
-        logger.error(f"Unexpected error in update_message_content: {str(e)}")
+        logger.error(f"Unexpected error in update_message: {str(e)}")
     return False
 
 

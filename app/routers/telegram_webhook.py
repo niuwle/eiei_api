@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
-    check_if_chat_is_awaiting, insert_user_if_not_exists, is_user_banned, add_messages, get_bot_id_by_short_name, get_bot_token, reset_messages_by_chat_id, mark_chat_as_awaiting, get_latest_total_credits, add_payment_details, update_user_credits
+    check_if_chat_is_awaiting, insert_user_if_not_exists, is_user_banned, add_messages,  get_bot_config, reset_messages_by_chat_id, manage_awaiting_status, get_latest_total_credits, add_payment_details, update_user_credits
 )
 from app.controllers.telegram_integration import send_reset_options, send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
@@ -112,7 +112,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         text_prefix = message_data.text
         if message_data.text == "/start":
             predefined_response_text = "Hi I'm Tabatha! What about you?"
-            await send_telegram_message(chat_id, predefined_response_text, await get_bot_token(bot_id, db))
+            await send_telegram_message(chat_id, predefined_response_text, await get_bot_config(db, return_type='token', bot_id=bot_id))
             text_prefix = predefined_response_text
         else:
             # Before deciding on the generic process_task, check if the chat is awaiting specific input
@@ -129,6 +129,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             else:
                 process_task = process_queue
                 task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+                logger.info(f"task_params text set")
 
     elif message_data.photo:
         message_type = 'PHOTO'
@@ -157,7 +158,9 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text="[AI PLACEHOLDER]", message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
         ]
 
+        logger.info(f"added_messages 1")
         added_messages = await add_messages(db, messages_info)
+        logger.info(f"added_messages 2")
         if process_task and len(added_messages) > 1:
             # Add specific parameters based on the message type
             task_specific_params = {'message_pk': added_messages[0].pk_messages, 'ai_placeholder_pk': added_messages[1].pk_messages}
@@ -166,6 +169,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             
             all_task_params = {**task_params, **task_specific_params}  # Merge common and specific parameters
             background_tasks.add_task(process_task, **all_task_params)
+            logger.info(f"background_tasks set")
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
 @error_handler
@@ -181,8 +185,10 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         payload_obj = TelegramWebhookPayload(**payload)
 
         logger.debug('Parsed Payload: %s', payload_obj.dict())
-        bot_id = await get_bot_id_by_short_name(bot_short_name, db)
-        bot_token = await get_bot_token(bot_id, db)
+        bot_id = await get_bot_config( db, bot_short_name=bot_short_name)
+        logger.debug('bot_id catched', bot_id)
+        bot_token = await get_bot_config(db,  return_type='token', bot_id=bot_id)
+        logger.debug('bot_token catched', bot_token)
 
         # Handling callback_query for inline keyboard responses
         if 'callback_query' in payload:
@@ -231,11 +237,11 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             # Depending on the callback data, trigger the corresponding function
             if data == "generate_photo":
-                await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="PHOTO")
+                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='PHOTO')
                 await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=bot_token)
             
             if data == "generate_audio":
-                await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
+                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='AUDIO')
                 await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
            
             if data == "ask_credit":
@@ -263,7 +269,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         if payload_obj.message and payload_obj.message.text == "/getvoice":
 
             # Mark the chat as awaiting voice input in the database
-            await mark_chat_as_awaiting(db=db, channel="TELEGRAM",chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="AUDIO")
+            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='AUDIO')
 
             # Send a prompt to the user asking for the voice input
             await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
@@ -274,10 +280,10 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         if payload_obj.message and payload_obj.message.text == "/getphoto":
 
             # Mark the chat as awaiting photo input in the database
-            await mark_chat_as_awaiting(db=db, channel="TELEGRAM", chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type="PHOTO")
+            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='PHOTO')
 
             # Send a prompt to the user asking for the text input to generate the photo
-            await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=await get_bot_token(await get_bot_id_by_short_name(bot_short_name, db), db))
+            await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=await get_bot_config(db, return_type='token', bot_id=bot_id ))
 
             return {"status": "Awaiting text input for photo generation"}
 

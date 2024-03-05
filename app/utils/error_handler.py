@@ -4,7 +4,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from app.controllers.telegram_integration import send_telegram_error_message
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database_operations import get_bot_id_by_short_name
 import logging
 app = FastAPI()
 
