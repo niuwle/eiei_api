@@ -99,8 +99,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
             if success:
                 logger.debug(f"user is awaiting audio generation")  # Debug statement
                 # Clear the awaiting status, as we start processing
-                await manage_awaiting_status(db, chat_id=chat_id,  action='REMOVE')
-
+                await manage_awaiting_status(db, chat_id=chat_id,  channel='TELEGRAM' , action='REMOVE')
 
                 # Start audio generation in a background task
                 audio_generation_task = asyncio.create_task(
@@ -159,7 +158,7 @@ async def process_message(messages, db, chat_id, bot_id, user_id, ai_placeholder
             if success:
                 logger.debug("User is awaiting photo generation")
                 # Clear the awaiting status for photo
-                await manage_awaiting_status(db, chat_id=chat_id,  action='REMOVE')
+                await manage_awaiting_status(db, chat_id=chat_id, ,  channel='TELEGRAM'  action='REMOVE')
                 # Start photo generation in a background task
                 photo_generation_task = asyncio.create_task(
                     generate_photo_from_text(text=messages[0].content_text)
