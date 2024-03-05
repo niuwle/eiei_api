@@ -186,9 +186,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         logger.debug('Parsed Payload: %s', payload_obj.dict())
         bot_id = await get_bot_config( db, bot_short_name=bot_short_name)
-        logger.debug('bot_id catched', bot_id)
         bot_token = await get_bot_config(db,  return_type='token', bot_id=bot_id)
-        logger.debug('bot_token catched', bot_token)
 
         # Handling callback_query for inline keyboard responses
         if 'callback_query' in payload:

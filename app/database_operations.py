@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import update
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Union, Type
