@@ -89,16 +89,18 @@ async def get_image(partial_filename: str):
     closest_match_len_difference = float('inf')
 
     # Search for the closest match based on the partial filename
-    for filename in file_info.keys():
-        # Check if the partial filename is part of the actual filename
-        if partial_filename in filename:
-            # Calculate the difference in length between the search term and the candidate filename
-            len_difference = len(filename) - len(partial_filename)
-            
-            # Update the closest match if this filename is a closer match
-            if len_difference < closest_match_len_difference:
-                closest_match = filename
-                closest_match_len_difference = len_difference
+    #for filename in file_info.keys():
+    #    # Check if the partial filename is part of the actual filename
+    #    if partial_filename in filename:
+    #        # Calculate the difference in length between the search term and the candidate filename
+    #        len_difference = len(filename) - len(partial_filename)
+    #        
+    #        # Update the closest match if this filename is a closer match
+    #        if len_difference < closest_match_len_difference:
+    #            closest_match = filename
+    #            closest_match_len_difference = len_difference
+#
+    closest_match = find_best_match(file_info.keys(), partial_filename)
 
     # If a match was found, use it
     if closest_match:
@@ -159,31 +161,36 @@ def find_best_match(filenames, search_key):
     """
     Search for the best match for a given search key among a list of filenames.
     Incorporates multiple strategies such as exact match, regex, prefix/suffix, and simplified fuzzy matching.
+    Only returns the top match as a string.
 
     :param filenames: An iterable of filenames to search through.
     :param search_key: The search key to find matches for.
-    :return: A list of filenames that match the search key, sorted by relevance.
+    :return: The best match filename as a string, or an empty string if no match is found.
     """
-    exact_matches = []
-    regex_matches = []
-    prefix_suffix_matches = []
-    fuzzy_matches = []
-
     for filename in filenames:
         if filename == search_key:  # Exact match
-            exact_matches.append(filename)
-        elif re.search(search_key, filename):  # Regex match
-            regex_matches.append(filename)
-        elif filename.startswith(search_key) or filename.endswith(search_key):  # Prefix or Suffix match
-            prefix_suffix_matches.append(filename)
-        elif simplified_fuzzy_match(search_key, filename):  # Simplified fuzzy match
-            fuzzy_matches.append(filename)
+            return filename
 
-    # Compile all matches, with priority given to exact, regex, prefix/suffix, then fuzzy matches
-    all_matches = exact_matches + regex_matches + prefix_suffix_matches + fuzzy_matches
+    # If no exact match, look for the first regex match
+    for filename in filenames:
+        if re.search(search_key, filename):  # Regex match
+            return filename
 
-    logger.info(f"all_matches 1: {all_matches}")
-    return all_matches
+    # If no regex match, look for the first prefix/suffix match
+    for filename in filenames:
+        if filename.startswith(search_key) or filename.endswith(search_key):  # Prefix or Suffix match
+            return filename
+
+    # If no prefix/suffix match, look for the first fuzzy match
+    for filename in filenames:
+        if simplified_fuzzy_match(search_key, filename):  # Simplified fuzzy match
+            return filename
+
+    # If no matches are found
+    
+    logger.info(f" no matches are found: {all_matches}")
+    return ""
+    
 
 def simplified_fuzzy_match(search_key, filename):
     """

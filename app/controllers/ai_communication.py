@@ -106,6 +106,7 @@ async def get_photo_filename(requested_photo: str):
             response_content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "").replace("•", "").strip()
             if response_content:
                 logger.info(f"Received response from OpenRouter: {response_data}")
+                logger.info(f"Content parsed: {response_content}")
                 return response_content
             else:
                 attempt += 1
