@@ -142,12 +142,12 @@ def ensure_temp_dir_exists():
         os.makedirs(TEMP_DIR)
 
 def cleanup_old_temp_files():
-    now = datetime.now()
+    now = datetime.utcnow()
     threshold = timedelta(seconds=60)  # Files older than this will be deleted
 
     for filename in os.listdir(TEMP_DIR):
         file_path = os.path.join(TEMP_DIR, filename)
-        file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+        file_mod_time = datetime.utcfromtimestamp(os.path.getmtime(file_path))
         if now - file_mod_time > threshold:
             try:
                 os.remove(file_path)

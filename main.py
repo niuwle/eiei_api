@@ -6,6 +6,7 @@ from app.logging_config import setup_logging
 from fastapi.staticfiles import StaticFiles
 import asyncio
 from app.utils.file_list_cache import get_cached_file_list
+from app.utils.automatic_reply import check_and_trigger_responses
 
 from app.controllers.ai_communication import get_photo_filename
 setup_logging()
@@ -28,8 +29,11 @@ async def startup_event():
     file_list = await get_cached_file_list()
     # Print the refreshed file list
     logger.info("Cache initialized with the following files:")
+    asyncio.create_task(check_and_trigger_responses())
     
     # for file_url in file_list:
     #     logger.info(file_url)
 # 
     # logger.info("test function "+await get_photo_filename("show me a red car"))
+
+

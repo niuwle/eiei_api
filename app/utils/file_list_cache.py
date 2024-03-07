@@ -36,7 +36,7 @@ async def refresh_file_list():
 
 
 async def get_cached_file_list():
-    now = datetime.now()
+    now = datetime.utcnow()
     if not cache["file_info"] or now - cache["last_update"] > CACHE_EXPIRATION:
         logger.info("Cache miss, refreshing...")
         cache["file_info"] = await refresh_file_list()

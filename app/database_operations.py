@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import update
-from datetime import datetime
+from sqlalchemy import update, and_, func
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Union, Type
 
@@ -72,7 +72,7 @@ async def add_messages(db: AsyncSession, messages_info: List[dict]) -> List[Type
             message_id=message_data.message_id,
             channel=message_data.channel,
             update_id=message_data.update_id,
-            message_date=datetime.now(),
+            message_date=datetime.utcnow(),
             type=message_type,
             is_processed=is_processed,
             is_reset='N',
@@ -221,6 +221,7 @@ async def get_latest_total_credits(db: AsyncSession, user_id: int, bot_id: int) 
             .limit(1)
         )
         latest_credit_value = latest_credit.scalar_one_or_none()
+        logger.debug(f"For user_id={user_id}, pk_bot={bot_id}. latest_credit_value: {latest_credit_value}")
         return Decimal(latest_credit_value) if latest_credit_value is not None else Decimal(0)
     except SQLAlchemyError as e:
         logger.error(f"Database error in get_latest_total_credits: {e}")
@@ -301,3 +302,49 @@ async def is_user_banned(db: AsyncSession, id: int, pk_bot: int, channel: str) -
         logger.warning("User not found.")
         return False  # Assuming not banned if the user doesn't exist for safety
     return is_banned
+
+
+
+async def get_users_for_auto_reply(db: AsyncSession) -> set:
+    """
+    Fetch users whose last message was sent more than 5 minutes ago.
+    """
+    cutoff_time = datetime.utcnow() - timedelta(minutes=240)
+    user_info_set = set()
+
+    try:
+        # First, group messages by user and find the most recent message time for each
+        recent_messages_subq = (
+            select(
+                tbl_msg.chat_id,
+                tbl_msg.user_id,
+                tbl_msg.bot_id,
+                func.max(tbl_msg.message_date).label('last_message_time')
+            )
+            .group_by(tbl_msg.chat_id, tbl_msg.user_id, tbl_msg.bot_id)
+            .subquery()
+        )
+
+        # Then, select those users whose last message was more than 5 minutes ago
+        query = (
+            select(
+                recent_messages_subq.c.chat_id,
+                recent_messages_subq.c.user_id,
+                recent_messages_subq.c.bot_id
+            )
+            .where(recent_messages_subq.c.last_message_time < cutoff_time)
+        )
+
+        result = await db.execute(query)
+        rows = result.fetchall()
+
+        for row in rows:
+            # Optionally, fetch bot_short_name if needed using the bot_id
+            # This might require an additional query per row, consider caching or optimizing
+            bot_short_name =  await get_bot_config(db,  return_type='short_name', bot_id=row.bot_id)   # Simplification for illustration
+            user_info_set.add((row.chat_id, row.user_id, bot_short_name))
+
+        return user_info_set
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_users_for_auto_reply: {e}")
+        return set()
