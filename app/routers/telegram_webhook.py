@@ -98,6 +98,7 @@ router = APIRouter()
 
 async def process_message_type(message_data, chat_id, user_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
     message_type, process_task, text_prefix = None, None, ""
+    ai_placeholder = "[AI PLACEHOLDER]"
     task_params = {} 
 
     # Check if the message text starts with "/" and is not a recognized command
@@ -112,7 +113,8 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         if message_data.text == "/start":
             predefined_response_text = "Hi I'm Tabatha! What about you?"
             await send_telegram_message(chat_id, predefined_response_text, await get_bot_config(db, return_type='token', bot_id=bot_id))
-            text_prefix = predefined_response_text
+            text_prefix = "/start"
+            ai_placeholder = predefined_response_text
         else:
             # Before deciding on the generic process_task, check if the chat is awaiting specific input
             if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
@@ -154,7 +156,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         
         messages_info = [
             {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
-            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text="[AI PLACEHOLDER]", message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
+            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text=ai_placeholder, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
         ]
 
         logger.info(f"added_messages 1")
@@ -405,7 +407,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                 await send_telegram_message(chat_id, "You don't have enough credits to perform this operation.", bot_token)
                 await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=total_credits)
                 return {"status": "Insufficient credits"}
-                
+
         # Use the username as a fallback for last_name if last_name is not provided
         last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
         user_data = {
