@@ -1,4 +1,4 @@
-
+# app/utils/process_photo.py
 import asyncio
 import httpx
 import logging
@@ -35,8 +35,10 @@ async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: in
             logger.info(f"Caption text: {caption_text}")
             await update_message(db, message_pk=message_pk, new_content=caption_text)
             await update_message(db, message_pk=message_pk, new_status="N")
-            background_tasks.add_task(process_queue, chat_id, user_id, message_pk, ai_placeholder_pk, db)
+            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, db=db)
     except Exception as e:
         logger.error(f"Error in caption_photo: {e}")
         await update_message(db, message_pk=message_pk, new_status="E")
+
+
 

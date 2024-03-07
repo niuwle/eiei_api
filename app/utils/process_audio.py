@@ -97,8 +97,8 @@ async def transcribe_audio(background_tasks,   message_pk: int, ai_placeholder_p
 
             await update_message(db, message_pk=message_pk, new_status="N")
             os.remove(converted_file_path)
-            background_tasks.add_task(process_queue, chat_id, user_id, message_pk, ai_placeholder_pk, db)
-
+            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, db=db)
+ 
     except Exception as e:
         logger.error(f"Error in transcribe_audio: {e}")
         await update_message(db, message_pk=message_pk, new_status="E")
