@@ -48,4 +48,4 @@ async def check_and_trigger_responses():
                         logger.error(f"Failed to send automatic reply to user_id: {user_id}, chat_id: {chat_id}. Response status: {response.status_code}")
 
             logger.debug("Finished sending automatic replies.")
-            await asyncio.sleep(14400)  # Wait for 4 hours before checking again
+            await asyncio.sleep(30)  # Wait for 4 hours before checking again
