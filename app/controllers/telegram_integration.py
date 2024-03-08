@@ -106,10 +106,9 @@ async def send_voice_note(chat_id: int, audio_file_path: str, bot_token: str) ->
 
    return success
 
-
-async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str) -> bool:
+async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str, caption: str = None) -> bool:
    """
-   Sends a photo message to a user in Telegram using a photo stored at a local file path.
+   Sends a photo message to a user in Telegram using a photo stored at a local file path with an optional caption.
    """
    logger.debug(f"send_photo_message with bot_token: {bot_token}")
    url = f'https://api.telegram.org/bot{bot_token}/sendPhoto'
@@ -117,19 +116,23 @@ async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str)
    try:
        with open(photo_temp_path, 'rb') as photo_file:
            files = {
-               'photo': photo_file,
-               'chat_id': (None, str(chat_id))
+               'photo': photo_file
            }
-           logger.debug(f"Sending photo message to chat_id {chat_id} with photo from {photo_temp_path}")
-           success = await send_telegram_request_with_file(url, files)
+           data = {
+               'chat_id': str(chat_id),
+               'caption': caption
+           }
+           logger.debug(f"Sending photo message to chat_id {chat_id} with photo from {photo_temp_path} and caption '{caption}'")
+           success = await send_telegram_request_with_file(url, files, data)
            if success:
-               logger.info(f"Photo message sent successfully to chat_id {chat_id}")
+               logger.info(f"Photo message sent successfully to chat_id {chat_id} with caption '{caption}'")
            return success
    except FileNotFoundError:
        logger.error(f"File not found: {photo_temp_path}")
    except Exception as e:
        logger.error(f"Unexpected error in send_photo_message: {str(e)}")
    return False
+
 
 
 async def send_generate_options(chat_id: int, bot_token: str):

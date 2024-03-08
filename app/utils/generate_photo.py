@@ -1,5 +1,6 @@
 # app/utils/generate_photo.py
 import httpx
+import random
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import uuid4
@@ -187,9 +188,10 @@ def find_best_match(filenames, search_key):
             return filename
 
     # If no matches are found
-    
-    logger.info(f" no matches are found: {all_matches}")
-    return ""
+        
+    logger.info("No matches are found. Returning a random filename as fallback.")
+    return random.choice(filenames) if filenames else ""
+
     
 
 def simplified_fuzzy_match(search_key, filename):
