@@ -23,43 +23,6 @@ TEMP_DIR = "./temp_files"  # Temporary storage directory
 logger = logging.getLogger(__name__)
 
 
-# Function to generate a signed URL
-async def generate_signed_url(filename: str) -> Optional[str]:
-    info = InMemoryAccountInfo()
-    b2_api = B2Api(info)
-    b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
-    bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
-
-    valid_duration_in_seconds = 3600  # or any duration you prefer
-    b2_authorization_token = bucket.get_download_authorization(filename, valid_duration_in_seconds)
-    signed_url = f"https://f005.backblazeb2.com/file/{B2_BUCKET_NAME}/{file_id}?Authorization={b2_authorization_token}"
-    logger.info(f"signed_url URL: {signed_url}")
-    return signed_url
-
-async def get_photo_url_by_filename(partial_filename: str) -> Optional[str]:
-    file_info = await get_cached_file_list()
-    if not file_info:
-        logger.error("No file info available in cache.")
-        return None
-
-    matches = find_best_match(file_info.keys(), partial_filename)
-
-    if matches:
-        logger.info(f"(Matched filename: {closest_match})")
-        
-        # URL-encode the filename to ensure it's safely included in the URL
-        from urllib.parse import quote
-        encoded_filename = quote(closest_match)
-        
-        # Construct the final URL
-        final_url = f"{HOST_URL}/get-image/{encoded_filename}"
-        logger.info(f"(final_url: {final_url})")
-        return final_url
-    else:
-        logger.error(f"No filename containing '{partial_filename}' was found in cache.")
-        return None
-
-
 
 async def generate_photo_from_text(text: str) -> Optional[str]:
     try:

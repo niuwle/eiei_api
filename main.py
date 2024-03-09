@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 from app.utils.file_list_cache import get_cached_file_list
 from app.utils.automatic_reply import check_and_trigger_responses
+from app.routers.keep_alive import router as keep_alive_router
 
 from app.controllers.ai_communication import get_photo_filename
 setup_logging()
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 # Include routers
 app.include_router(api_router)
 app.include_router(telegram_router)
+app.include_router(keep_alive_router)
 
 # Mount static directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
