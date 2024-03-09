@@ -172,6 +172,23 @@ async def send_credit_purchase_options(chat_id: int, bot_token: str):
    await send_telegram_request(f"{TELEGRAM_API_URL}{bot_token}/sendMessage", payload)
 
 
+async def send_request_for_audio(chat_id: int, bot_token: str):
+    keyboard = {
+        "inline_keyboard": [[{"text": "Yes, send me a voice note! 🎙️", "callback_data": "generate_audio"}]]
+    }
+    text = "Do you want to receive a voice note?"
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    await send_telegram_request(f"https://api.telegram.org/bot{bot_token}/sendMessage", payload)
+
+async def send_request_for_photo(chat_id: int, bot_token: str):
+    keyboard = {
+        "inline_keyboard": [[{"text": "Yes, show me a photo! 📸", "callback_data": "generate_photo"}]]
+    }
+    text = "Do you want to see a photo?"
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    await send_telegram_request(f"https://api.telegram.org/bot{bot_token}/sendMessage", payload)
+
+
 async def send_reset_options(chat_id: int, bot_token: str):
    keyboard = {
        "inline_keyboard": [
