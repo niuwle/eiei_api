@@ -124,52 +124,65 @@ def cleanup_old_temp_files():
 def find_best_match(filenames, search_key):
     """
     Search for the best match for a given search key among a list of filenames.
-    Incorporates multiple strategies such as exact match, regex, prefix/suffix, and simplified fuzzy matching.
-    Only returns the top match as a string.
+    Incorporates multiple strategies such as exact match, regex, prefix/suffix, and simplified fuzzy matching,
+    returning the top match as a string along with debug information.
 
     :param filenames: An iterable of filenames to search through.
     :param search_key: The search key to find matches for.
-    :return: The best match filename as a string, or an empty string if no match is found.
+    :return: Tuple of the best match filename as a string and debugging information.
     """
+    debug_info = []
+
+    # Ensure filenames is a list to avoid issues with non-reiterable iterables
+    if not isinstance(filenames, list):
+        filenames = list(filenames)
+
+    # Guard against empty search_key or filenames
+    if not search_key or not filenames:
+        debug_info.append("Empty search_key or filenames provided.")
+        return "", debug_info
+
+    # Exact match
     for filename in filenames:
-        if filename == search_key:  # Exact match
-            return filename
+        if filename == search_key:
+            debug_info.append(f"Exact match found: {filename}")
+            return filename, debug_info
 
-    # If no exact match, look for the first regex match
+    # Improved regex match
+    search_key_escaped = re.escape(search_key)
     for filename in filenames:
-        if re.search(search_key, filename):  # Regex match
-            return filename
+        if re.search(search_key_escaped, filename):
+            debug_info.append(f"Regex match found: {filename}")
+            return filename, debug_info
 
-    # If no regex match, look for the first prefix/suffix match
+    # Prefix/Suffix match
+    normalized_search_key = search_key.replace('\\', '/')
     for filename in filenames:
-        if filename.startswith(search_key) or filename.endswith(search_key):  # Prefix or Suffix match
-            return filename
+        normalized_filename = filename.replace('\\', '/')
+        if normalized_filename.startswith(normalized_search_key) or normalized_filename.endswith(normalized_search_key):
+            debug_info.append(f"Prefix/Suffix match found: {filename}")
+            return filename, debug_info
 
-    # If no prefix/suffix match, look for the first fuzzy match
+    # Simplified fuzzy match as last resort
     for filename in filenames:
-        if simplified_fuzzy_match(search_key, filename):  # Simplified fuzzy match
-            return filename
+        if simplified_fuzzy_match(search_key, filename):
+            debug_info.append(f"Fuzzy match found: {filename}")
+            return filename, debug_info
 
-    # If no matches are found
-        
-    logger.info("No matches are found. Returning a random filename as fallback.")
-    return random.choice(filenames) if filenames else ""
-
-    
+    # No matches found
+    debug_info.append("No matches found. Returning a random filename as fallback.")
+    fallback = random.choice(filenames)
+    return fallback, debug_info
 
 def simplified_fuzzy_match(search_key, filename):
     """
     Perform a simplified fuzzy match between the search key and the filename.
-    This basic implementation counts the number of matching characters, allowing for some mismatches.
+    Counts the number of matching characters, allowing for some mismatches.
 
     :param search_key: The search key to match.
     :param filename: The filename to compare against the search key.
     :return: Boolean indicating if a fuzzy match is found.
     """
-    match_score = 0
-    for char in search_key:
-        if char in filename:
-            match_score += 1
-    # Define tolerance as 60% of the search key's length
+    match_score = sum(char in filename for char in search_key)
     tolerance = len(search_key) * 0.6
     return match_score >= tolerance
