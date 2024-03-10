@@ -51,6 +51,10 @@ async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Op
             payload = {
                 "model": OPENROUTER_MODEL,
                 "max_tokens": MAX_TOKENS,
+                "temperature": 0.9,  # Encourages predictability with minimal variability
+                "top_p": 1,  # Keeps a broad token choice
+                "frequency_penalty": 0.7,  # Discourages frequent token repetition
+                "repetition_penalty": 1,  # Prevents input token repetition
                 "messages": [{"role": "system", "content": assistant_prompt}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]
             }
 
@@ -75,6 +79,10 @@ async def get_photo_filename(requested_photo: str) -> Optional[str]:
     payload = {
         "model": OPENROUTER_MODEL,
         "max_tokens": MAX_TOKENS,
+        "temperature": 0.9,  # Encourages predictability with minimal variability
+        "top_p": 1,  # Keeps a broad token choice
+        "frequency_penalty": 0.7,  # Discourages frequent token repetition
+        "repetition_penalty": 1,  # Prevents input token repetition
         "messages": [{"role": "system", "content": await construct_photo_finder_prompt(requested_photo, list_of_files)}]
     }
 
@@ -129,21 +137,25 @@ async def construct_photo_finder_prompt(requested_photo: str, file_list: str) ->
 
 
 async def generate_photo_reaction(photo_caption: str, file_name: str, bot_id: int, db: AsyncSession) -> str:
-   """Generate a reaction to a given photo caption and file name."""
+    """Generate a reaction to a given photo caption and file name."""
 
-   assistant_prompt = await get_bot_assistant_prompt(bot_id, db)
+    assistant_prompt = await get_bot_assistant_prompt(bot_id, db)
 
-   logger.debug(f"reaction to caption: {photo_caption} filename {file_name}")
-   payload = {
-      "model": OPENROUTER_MODEL,
-      "max_tokens": MAX_TOKENS,
-      "messages": [{
-         "role": "system",
-         "content": f"{assistant_prompt} Your first task is react to this photo caption '{photo_caption}' and its file name '{file_name}',  be creative"
-      }]
-   }
-   response_data = await send_payload_to_openrouter(payload)
-   reaction = response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-   
-   logger.debug(f"reaction response: {reaction}")
-   return reaction
+    logger.debug(f"reaction to caption: {photo_caption} filename {file_name}")
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "max_tokens": MAX_TOKENS,
+        "temperature": 0.9,  # Encourages predictability with minimal variability
+        "top_p": 1,  # Keeps a broad token choice
+        "frequency_penalty": 0.7,  # Discourages frequent token repetition
+        "repetition_penalty": 1,  # Prevents input token repetition
+        "messages": [{
+            "role": "system",
+            "content": f"{assistant_prompt} Your first task is react to this photo caption '{photo_caption}' and its file name '{file_name}',  be creative"
+        }]
+    }
+    response_data = await send_payload_to_openrouter(payload)
+    reaction = response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    
+    logger.debug(f"reaction response: {reaction}")
+    return reaction
