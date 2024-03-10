@@ -129,50 +129,43 @@ def find_best_match(filenames, search_key):
 
     :param filenames: An iterable of filenames to search through.
     :param search_key: The search key to find matches for.
-    :return: Tuple of the best match filename as a string and debugging information.
     """
-    debug_info = []
 
     # Ensure filenames is a list to avoid issues with non-reiterable iterables
     if not isinstance(filenames, list):
         filenames = list(filenames)
 
-    # Guard against empty search_key or filenames
-    if not search_key or not filenames:
-        debug_info.append("Empty search_key or filenames provided.")
-        return "", debug_info
-
     # Exact match
     for filename in filenames:
         if filename == search_key:
-            debug_info.append(f"Exact match found: {filename}")
-            return filename, debug_info
+            logger.debug(f"Exact match found: {filename}")
+            return filename
 
     # Improved regex match
     search_key_escaped = re.escape(search_key)
     for filename in filenames:
         if re.search(search_key_escaped, filename):
-            debug_info.append(f"Regex match found: {filename}")
-            return filename, debug_info
+            logger.debug(f"Regex match found: {filename}")
+            return filename
 
     # Prefix/Suffix match
     normalized_search_key = search_key.replace('\\', '/')
     for filename in filenames:
         normalized_filename = filename.replace('\\', '/')
         if normalized_filename.startswith(normalized_search_key) or normalized_filename.endswith(normalized_search_key):
-            debug_info.append(f"Prefix/Suffix match found: {filename}")
-            return filename, debug_info
+            logger.debug(f"Prefix/Suffix match found: {filename}")
+            return filename
 
     # Simplified fuzzy match as last resort
     for filename in filenames:
         if simplified_fuzzy_match(search_key, filename):
-            debug_info.append(f"Fuzzy match found: {filename}")
-            return filename, debug_info
+            logger.debug(f"Fuzzy match found: {filename}")
+            return filename
 
     # No matches found
-    debug_info.append("No matches found. Returning a random filename as fallback.")
+    logger.debug(f"No matches found. Returning a random filename as fallback.")
     fallback = random.choice(filenames)
-    return fallback, debug_info
+    return fallback
 
 def simplified_fuzzy_match(search_key, filename):
     """
