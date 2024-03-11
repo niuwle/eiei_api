@@ -86,25 +86,41 @@ async def send_audio_message(chat_id: int, audio_file_path: str, bot_token: str)
    return success
 
 
+
 async def send_voice_note(chat_id: int, audio_file_path: str, bot_token: str) -> bool:
-   """
-   Sends a voice note to a user in Telegram and deletes the file afterwards.
-   """
-   logger.debug(f"send_voice_note with bot_token: {bot_token}")
-   url = f'{TELEGRAM_API_URL}{bot_token}/sendVoice'
-   files = {'voice': open(audio_file_path, 'rb')}
-   data = {"chat_id": chat_id}
+    """
+    Sends a voice note to a user in Telegram using a voice note stored at a local file path.
+    The function also attempts to delete the voice note file after sending it.
+    """
+    logger.debug(f"send_voice_note with bot_token: {bot_token}")
+    url = f'https://api.telegram.org/bot{bot_token}/sendVoice'
 
-   success = await send_telegram_request_with_file(url, files, data)
+    try:
+        with open(audio_file_path, 'rb') as audio_file:
+            files = {
+                'voice': audio_file
+            }
+            data = {
+                'chat_id': chat_id
+            }
+            logger.debug(f"Sending voice note to chat_id {chat_id} with voice note from {audio_file_path}")
+            success = await send_telegram_request_with_file(url, files, data)
+            if success:
+                logger.info(f"Voice note sent successfully to chat_id {chat_id}")
+    except FileNotFoundError:
+        logger.error(f"File not found: {audio_file_path}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error in send_voice_note: {str(e)}")
+        return False
 
-   files['voice'].close()
-   try:
-       os.remove(audio_file_path)
-       logger.info(f"Successfully deleted voice note file: {audio_file_path}")
-   except Exception as e:
-       logger.error(f"Failed to delete voice note file: {audio_file_path}. Error: {e}")
-
-   return success
+    try:
+        os.remove(audio_file_path)
+        logger.info(f"Successfully deleted voice note file: {audio_file_path}")
+    except Exception as e:
+        logger.error(f"Failed to delete voice note file: {audio_file_path}. Error: {e}")
+    
+    return success
 
 async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str, caption: str = None) -> bool:
    """

@@ -26,6 +26,7 @@ from app.schemas import TextMessage
 from app.utils.generate_audio import (
    generate_audio_from_text,
    generate_audio_with_monsterapi,
+   generate_audio_from_text2
 )
 from app.utils.generate_photo import generate_photo_from_text
 from app.utils.caption_photo import get_caption_for_local_photo
@@ -120,7 +121,9 @@ async def process_message(
             logger.debug(f"Chat completion response: {response_text}")
 
             audio_generation_task = asyncio.create_task(
-                generate_audio_with_monsterapi(text=response_text)
+                
+                generate_audio_from_text(text=response_text)
+                #generate_audio_with_monsterapi(text=response_text)
             )
 
             try:
@@ -157,7 +160,7 @@ async def process_message(
                 await update_user_credits(db, user_credit_info)
 
                 await update_telegram_message(
-                    chat_id, generating_message_id, "Audio generated successfully.", bot_token
+                    chat_id, generating_message_id, "💕 Here you go! 💕", bot_token
                 )
             else:
                 final_message = "Sorry, I couldn't generate the audio. Please try again."
@@ -218,7 +221,7 @@ async def process_message(
                 await update_user_credits(db, user_credit_info)
 
                 await update_telegram_message(
-                chat_id, generating_message_id, "Photo selected successfully.", bot_token
+                chat_id, generating_message_id, "💕 Here you go! 💕", bot_token
                 )
             else:
                 final_message = "Sorry, I couldn't generate a photo from the description provided. Please try again."

@@ -74,7 +74,7 @@ async def generate_audio_with_monsterapi(text: str) -> Optional[str]:
         return None
 
 
-async def generate_audio_from_text(text: str) -> str:
+async def generate_audio_from_text2(text: str) -> str:
     XI_API_KEY = ELEVENLABS_KEY  # Your ElevenLabs API key
     voice_id = "UVxc67Ct0LcVox2mvQA1"  # The voice ID for the text-to-speech conversion
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
@@ -87,9 +87,9 @@ async def generate_audio_from_text(text: str) -> str:
 
     data = {
         "text": text,
-        "model_id": "eleven_monolingual_v1",  # Use the model ID from the documentation
+        "model_id": "eleven_monolingual_v2",  # Use the model ID from the documentation
         "voice_settings": {
-            "stability": 0.5,
+            "stability": 0.05,
             "similarity_boost": 0.5
             # Include any other settings as per your requirement
         }
@@ -112,7 +112,7 @@ async def generate_audio_from_text(text: str) -> str:
         raise Exception(error_message)
 
         
-def generate_audio_from_text2(text: str) -> str:
+async def generate_audio_from_text(text: str) -> str:
     
     logger.debug(f"Generation audio") # Debug statement
     """
@@ -138,7 +138,7 @@ def generate_audio_from_text2(text: str) -> str:
         "voice_settings": {
             "stability": 0.05,
             "similarity_boost": 1,
-            "style": 0
+            "style": 0.85
         }
     }
 
