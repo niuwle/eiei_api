@@ -10,6 +10,7 @@ class TelegramConfig(Base):
     bot_short_name = Column(String(100))
     bot_description = Column(String(4000))
     bot_token = Column(String(4000))
+    bot_voice_id = Column(String(4000))
     bot_assistant_prompt = Column(String(4000))
     bot_pre_prompt = Column(String(4000))
     bot_temperature = Column(Integer)

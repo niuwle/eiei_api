@@ -26,18 +26,21 @@ async def get_bot_config(db: AsyncSession, return_type: str = None, bot_id: int 
             
             if bot_id is not None:
                 logger.debug(f"Fetching bot config for bot_id: {bot_id}")
-                query = select(TelegramConfig.bot_token, TelegramConfig.bot_short_name).where(TelegramConfig.pk_bot == bot_id)
+                query = select(TelegramConfig.bot_token, TelegramConfig.bot_short_name, TelegramConfig.bot_voice_id).where(TelegramConfig.pk_bot == bot_id)
                 result = await session.execute(query)
                 bot_config = result.one_or_none()
                 logger.debug(f"Bot config fetched for bot_id {bot_id}: {bot_config}")
                 if bot_config:
-                    bot_token, bot_short_name = bot_config
+                    bot_token, bot_short_name, bot_voice_id = bot_config
                     logger.debug(f"Extracted bot_token: {bot_token}, bot_short_name: {bot_short_name}")
                     if return_type == 'token':
                         logger.debug(f"Returning bot_token: {bot_token}")
                         return bot_token
                     elif return_type == 'short_name':
                         logger.debug(f"Returning bot_short_name: {bot_short_name}")
+                        return bot_short_name
+                    elif return_type == 'voice_id':
+                        logger.debug(f"Returning bot_voice_id: {bot_voice_id}")
                         return bot_short_name
                     else:
                         logger.debug(f"Returning both bot_token and bot_short_name")

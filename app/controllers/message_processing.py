@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database_operations import (
    update_user_credits,
    get_bot_config,
-   add_messages,
    update_message,
    check_if_chat_is_awaiting,
    manage_awaiting_status,
@@ -15,18 +14,13 @@ from app.controllers.telegram_integration import (
    send_typing_action,
    update_telegram_message,
    send_telegram_message,
-   send_audio_message,
    send_voice_note,
    send_photo_message,
 )
 from app.models.message import tbl_msg
-from app.models import message  # Ensure this is imported
 from sqlalchemy.future import select
-from app.schemas import TextMessage
 from app.utils.generate_audio import (
-   generate_audio_from_text,
-   generate_audio_with_monsterapi,
-   generate_audio_from_text2
+   generate_audio_from_text
 )
 from app.utils.generate_photo import generate_photo_from_text
 from app.utils.caption_photo import get_caption_for_local_photo
@@ -120,9 +114,11 @@ async def process_message(
             
             logger.debug(f"Chat completion response: {response_text}")
 
+            voice_id = await get_bot_config(db=db, return_type="voice_id", bot_id=messages[0].bot_id)
+
             audio_generation_task = asyncio.create_task(
                 
-                generate_audio_from_text(text=response_text)
+                generate_audio_from_text(text=response_text, voice_id=voice_id)
                 #generate_audio_with_monsterapi(text=response_text)
             )
 
