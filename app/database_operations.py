@@ -41,7 +41,7 @@ async def get_bot_config(db: AsyncSession, return_type: str = None, bot_id: int 
                         return bot_short_name
                     elif return_type == 'voice_id':
                         logger.debug(f"Returning bot_voice_id: {bot_voice_id}")
-                        return bot_short_name
+                        return bot_voice_id
                     else:
                         logger.debug(f"Returning both bot_token and bot_short_name")
                         return bot_token, bot_short_name

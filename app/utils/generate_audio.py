@@ -93,6 +93,7 @@ async def generate_audio_from_text(text: str, voice_id: str) -> str:
     #voice_id = "TFx9mJ79I0uOwtOH3LV9"  # Hardcoded voice ID
     voice_id = voice_id  # Hardcoded voice ID Para obtener buscar aca https://api.elevenlabs.io/v1/text-to-speech/UVxc67Ct0LcVox2mvQA1/stream?
     tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+    logger.debug(f"tts_url: {tts_url}")
     headers = {
         "Content-Type": "application/json",
         "xi-api-key": XI_API_KEY
