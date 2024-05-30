@@ -111,19 +111,20 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         message_type = 'TEXT'
         text_prefix = message_data.text
         if message_data.text == "/start":
-            predefined_response_text = "Hi I'm Tabatha! What about you?"
+            predefined_response_text = "Hi there! I'm Tabi! What about you? 😉 "
             await send_telegram_message(chat_id, predefined_response_text, await get_bot_config(db, return_type='token', bot_id=bot_id))
             text_prefix = "/start"
             ai_placeholder = predefined_response_text
         else:
             # Before deciding on the generic process_task, check if the chat is awaiting specific input
             if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
-                text_prefix = f"[USER REQUESTED AUDIO] {message_data.text}"
+                text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
                 # Adjust process_task and task_params as needed for AUDIO processing
                 process_task = process_queue  
                 task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
             elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
-                text_prefix = f"[USER REQUESTED PHOTO] {message_data.text}"
+                text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
+                text_prefix = f"{message_data.text}"
                 # Adjust process_task and task_params as needed for PHOTO processing
                 process_task = process_queue  
                 task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}

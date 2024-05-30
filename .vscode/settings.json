@@ -1,0 +1,19 @@
+{
+    "sqltools.connections": [
+        {
+            "pgOptions": {
+                "ssl": {
+                    "rejectUnauthorized": true
+                }
+            },
+            "previewLimit": 50,
+            "server": "dpg-cp2q1ei1hbls7382l1cg-a.oregon-postgres.render.com",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "name": "eiei_api",
+            "database": "eiei_ps_db",
+            "username": "eiei_ps_db_user",
+            "password": "LA5ZgnQ1NMptFBxN0oaqunXYrvW8Khcp"
+        }
+    ]
+}

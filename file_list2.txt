@@ -1,0 +1,2716 @@
+Date and Time: 28/05/2024 19.34.36
+Directory Structure and Files in ./app:
+
+Details of Files:
+Binary File: ./app/.DS_Store
+___________
+Start of file: ./app/config.py
+# app/config.py
+import os
+from dotenv import load_dotenv
+from decimal import Decimal
+
+load_dotenv()
+SQLALCHEMY_DATABASE_URL = os.getenv("SQLALCHEMY_DATABASE_URL")
+OPENROUTER_TOKEN = os.getenv("OPENROUTER_TOKEN")
+TELEGRAM_SECRET_TOKEN = os.getenv("TELEGRAM_SECRET_TOKEN")
+TELEGRAM_API_URL = os.getenv("TELEGRAM_API_URL")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL")
+OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+ASSISTANT_PROMPT = os.getenv("ASSISTANT_PROMPT")
+MONSTER_API_TOKEN = os.getenv("MONSTER_API_TOKEN")
+HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
+ELEVENLABS_KEY = os.getenv("ELEVENLABS_KEY") 
+STRIPE_API_KEY = os.getenv("STRIPE_API_KEY")
+
+HOST_URL = os.getenv("HOST_URL")
+CREDIT_COST_PHOTO = Decimal(os.getenv("CREDIT_COST_PHOTO", "10"))* Decimal('-1')
+CREDIT_COST_AUDIO = Decimal(os.getenv("CREDIT_COST_AUDIO", "5"))* Decimal('-1')
+CREDIT_COST_TEXT = Decimal(os.getenv("CREDIT_COST_TEXT", "1"))* Decimal('-1')
+
+
+B2_APPLICATION_KEY_ID = os.getenv("B2_APPLICATION_KEY_ID") 
+B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY")
+B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")End of file: ./app/config.py
+___________
+___________
+Start of file: ./app/controllers/ai_communication.py
+# ./app/controllers/ai_communication.py
+from sqlalchemy.ext.asyncio import AsyncSession
+import httpx
+import logging
+import asyncio
+from app.models.message import tbl_msg
+from typing import Optional
+from app.config import OPENROUTER_TOKEN, OPENROUTER_MODEL, OPENROUTER_URL
+from httpx import HTTPError
+from sqlalchemy.future import select
+from app.database_operations import get_bot_assistant_prompt 
+
+from app.utils.file_list_cache import get_cached_file_list
+# Create a logger
+logger = logging.getLogger(__name__)
+
+MAX_PAYLOAD_SIZE_CHARS = 8 * 1024
+MAX_TOKENS = 4024
+MAX_ATTEMPTS = 3
+
+async def send_payload_to_openrouter(api_payload: dict) -> dict:
+    """Helper function to send payload to OpenRouter and return the response."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(OPENROUTER_URL, json=api_payload, headers={"Authorization": f"Bearer {OPENROUTER_TOKEN}"})
+        response.raise_for_status()
+        logger.debug(f"Payload sent to OpenRouter: {api_payload}")
+        return response.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP status error in OpenRouter request: {str(e)}")
+        raise
+    except httpx.RequestError as e:
+        logger.error(f"Request error in OpenRouter request: {str(e)}")
+        raise
+
+async def get_chat_completion(chat_id: int, bot_id: int, db: AsyncSession) -> Optional[str]:
+    retries = 3
+    for attempt in range(retries + 1):
+        try:
+            assistant_prompt = await get_bot_assistant_prompt(bot_id, db)
+            if not assistant_prompt:
+                logger.error(f"No assistant prompt found for bot_id {bot_id}. Using default prompt.")
+                return None
+
+            messages = await db.execute(select(tbl_msg).filter(tbl_msg.chat_id == chat_id, tbl_msg.bot_id == bot_id, tbl_msg.is_processed != 'S', tbl_msg.is_reset != 'Y').order_by(tbl_msg.message_date))
+            messages = messages.scalars().all()
+
+            while len(str(messages)) > MAX_PAYLOAD_SIZE_CHARS:
+                messages.pop(0)
+
+            payload = {
+                "model": OPENROUTER_MODEL,
+                "max_tokens": MAX_TOKENS,
+                "temperature": 0.9,  # Encourages predictability with minimal variability
+                "top_p": 1,  # Keeps a broad token choice
+                "frequency_penalty": 0.7,  # Discourages frequent token repetition
+                "repetition_penalty": 1,  # Prevents input token repetition
+                "messages": [{"role": "system", "content": assistant_prompt}] + [{"role": message.role.lower(), "content": message.content_text} for message in messages]
+            }
+
+            response_data = await send_payload_to_openrouter(payload)
+
+            response_text = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if response_text:
+                return response_text
+            elif attempt < retries:
+                await asyncio.sleep(2)
+        except asyncio.TimeoutError:
+            logger.error(f"get_chat_completion timed out for chat_id {chat_id}, attempt {attempt + 1}")
+        except Exception as e:
+            logger.error(f"Error in get_chat_completion: {str(e)}")
+    return None
+
+
+async def get_photo_filename(requested_photo: str) -> Optional[str]:
+    file_info = await get_cached_file_list()
+    list_of_files = "|".join(file_info.keys())
+
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "max_tokens": MAX_TOKENS,
+        "temperature": 0.9,  # Encourages predictability with minimal variability
+        "top_p": 1,  # Keeps a broad token choice
+        "frequency_penalty": 0.7,  # Discourages frequent token repetition
+        "repetition_penalty": 1,  # Prevents input token repetition
+        "messages": [{"role": "system", "content": await construct_photo_finder_prompt(requested_photo, list_of_files)}]
+    }
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            response_data = await send_payload_to_openrouter(payload)
+            response_content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().replace(" ", "_")
+
+            if response_content:
+                logger.debug(f"Attempt {attempt}: Received valid response")
+                return response_content
+            else:
+                logger.warning(f"Attempt {attempt}: Received empty response. Retrying...")
+                await asyncio.sleep(1)
+
+        except HTTPError:
+            return None
+    logger.error("Failed to receive a valid response after maximum attempts.")
+    return None
+
+async def construct_photo_finder_prompt(requested_photo: str, file_list: str) -> str:
+   """Constructs and returns a prompt string for the photo finder."""
+   prompt = (
+      "You are the most advanced photo selection AI, specialized in matching descriptive texts with the most suitable file names from a given list. "
+      "Your task is to analyze a description and identify the file name that best corresponds to it. Precision and attention to detail are paramount.\n"
+      "\nTask Instructions:\n"
+      "1. Understand the Description: Carefully read the user-requested photo description. Pay attention to key descriptors (e.g., colors, objects, settings).\n"
+      "2. Analyze the List of Files: Review each file name in the provided list. Consider how elements of each file name might relate to the description's details.\n"
+      "3. Match Description to File Names: Select the file name that best aligns with the description. If the description matches multiple files, order them by relevance, from the highest to the lowest match.\n"
+      "4. Handling Ambiguities: If no file perfectly matches but multiple could fit based on some description aspects, list them by their degree of relevance. If no file closely matches, choose the one that is most loosely related.\n"
+      "5. Response Format: Your response should consist solely of the file name(s), exactly as listed, without any additional text or explanation. Separate multiple file names with a semicolon.\n"
+      f"Description: {requested_photo}\n"
+      f"List of Files:\n{file_list}\n"
+      "Select the file name that best matches the description above. "
+      "If more than one could match, order by best match and separate files by semicolon. "
+      "If no match at all then reply with the most closest option, always return at least one filename.\n"
+      "YOUR RESPONSE SHOULD ONLY BE THE FILENAME, NOTHING ELSE, THE FILE NAME PERFECTLY WRITTEN AS IT WILL BE INPUT IN ANOTHER FUNCTION.\n"
+      "\nImportant Notes:\n"
+      "- Precision in matching the description to the file names is crucial. Always strive for the most accurate match.\n"
+      "- Always return at least one file name, even if the match is not perfect. Choose the closest option available.\n"
+      "- Your response must include the exact file name as it is essential for subsequent processes."
+   )
+
+   return prompt
+
+
+async def generate_photo_reaction(photo_caption: str, file_name: str, bot_id: int, db: AsyncSession) -> str:
+    """Generate a reaction to a given photo caption and file name."""
+
+    assistant_prompt = await get_bot_assistant_prompt(bot_id, db)
+
+    logger.debug(f"reaction to caption: {photo_caption} filename {file_name}")
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "max_tokens": MAX_TOKENS,
+        "temperature": 0.9,  # Encourages predictability with minimal variability
+        "top_p": 1,  # Keeps a broad token choice
+        "frequency_penalty": 0.7,  # Discourages frequent token repetition
+        "repetition_penalty": 1,  # Prevents input token repetition
+        "messages": [{
+            "role": "system",
+            "content": f"{assistant_prompt} Your first task is react to this photo caption '{photo_caption}' and its file name '{file_name}',  be creative"
+        }]
+    }
+    response_data = await send_payload_to_openrouter(payload)
+    reaction = response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    
+    logger.debug(f"reaction response: {reaction}")
+    return reaction
+End of file: ./app/controllers/ai_communication.py
+___________
+___________
+Start of file: ./app/controllers/message_processing.py
+# ./app/controllers/message_processing.py
+import logging
+from datetime import datetime
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database_operations import (
+   update_user_credits,
+   get_bot_config,
+   update_message,
+   check_if_chat_is_awaiting,
+   manage_awaiting_status,
+)
+from app.controllers.ai_communication import get_chat_completion, generate_photo_reaction
+from app.controllers.telegram_integration import (
+   send_typing_action,
+   update_telegram_message,
+   send_telegram_message,
+   send_voice_note,
+   send_photo_message,
+)
+from app.models.message import tbl_msg
+from sqlalchemy.future import select
+from app.utils.generate_audio import (
+   generate_audio_from_text
+)
+from app.utils.generate_photo import generate_photo_from_text
+from app.utils.caption_photo import get_caption_for_local_photo
+
+from app.config import CREDIT_COST_PHOTO, CREDIT_COST_AUDIO, CREDIT_COST_TEXT
+from app.utils.error_handler import send_error_notification
+from app.utils.request_classifier import check_intent
+import asyncio
+import regex as re
+
+logger = logging.getLogger(__name__)
+
+async def process_queue(
+    chat_id: int,
+    bot_id: int,
+    user_id: int,
+    message_pk: int,
+    ai_placeholder_pk: int,
+    db: AsyncSession,
+    ):
+    try:
+        timestamp = datetime.utcnow()
+        await asyncio.sleep(3)
+        logger.info(f"Processing queue for chat_id {chat_id} as of {timestamp}")
+
+        stmt = (
+            select(tbl_msg)
+            .where(tbl_msg.chat_id == chat_id, tbl_msg.is_processed == "N")
+            .order_by(tbl_msg.message_date.desc())
+        )
+        async with db:
+            result = await db.execute(stmt)
+            unprocessed_messages = result.scalars().all()
+
+        logger.debug(f"Unprocessed messages: {unprocessed_messages}")
+
+        if unprocessed_messages:
+            logger.info(
+                f"Comparing message_date {unprocessed_messages[0].message_date} and timestamp {timestamp}"
+            )
+
+            if unprocessed_messages[0].message_date <= timestamp:
+                await process_message(
+                    unprocessed_messages, db, chat_id, bot_id, user_id, ai_placeholder_pk
+                )
+            else:
+                logger.info(
+                    f"Skipping processing: New message for chat_id {chat_id} arrived during wait."
+                )
+
+    except Exception as e:
+        logger.error(f"Error processing queue: {e}")
+        await db.rollback()
+        await send_error_notification(
+            chat_id,
+            await get_bot_config(db, return_type="token", bot_id=bot_id),
+            "Error: e001",
+        )
+    finally:
+        await db.close()
+
+async def process_message(
+    messages, db, chat_id, bot_id, user_id, ai_placeholder_pk: int
+    ):
+    logger.debug(f"Messages to process: {messages}")
+
+    bot_token = await get_bot_config(db, return_type="token", bot_id=messages[0].bot_id)
+
+    logger.debug(f"messages[0].bot_id new catch: {messages[0].bot_id}")
+    logger.debug(f"bot_token new catch: {bot_token}")
+
+    await send_typing_action(chat_id, bot_token)
+
+    for message in messages:
+        await update_message(db, message_pk=message.pk_messages, new_status="P")
+
+    response_text = None
+    
+    if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
+        success, generating_message_id = await send_telegram_message(
+            chat_id=chat_id, text="Generating audio, please wait.", bot_token=bot_token
+        )
+
+        if success:
+            logger.debug(f"user is awaiting audio generation")
+            await manage_awaiting_status(
+                db, chat_id=chat_id, channel="TELEGRAM", action="REMOVE"
+            )
+
+            response_text = await get_chat_completion(chat_id, messages[0].bot_id, db)
+            
+            logger.debug(f"Chat completion response: {response_text}")
+
+            voice_id = await get_bot_config(db=db, return_type="voice_id", bot_id=messages[0].bot_id)
+
+            audio_generation_task = asyncio.create_task(
+                
+                generate_audio_from_text(text=response_text, voice_id=voice_id)
+                #generate_audio_with_monsterapi(text=response_text)
+            )
+
+            try:
+                while not audio_generation_task.done():
+                    for i in range(4):
+                        if audio_generation_task.done():
+                            break
+                        new_text = f"Generating audio, please wait{'.' * (i % 4)}"
+                        await update_telegram_message(
+                            chat_id, generating_message_id, new_text, bot_token
+                        )
+                        await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                pass
+
+            audio_file_path = await audio_generation_task
+
+            if audio_file_path:
+                await send_voice_note(
+                    chat_id=chat_id, audio_file_path=audio_file_path, bot_token=bot_token
+                )
+
+                user_credit_info = {
+                    "channel": "TELEGRAM",
+                    "pk_bot": messages[0].bot_id,
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "credits": CREDIT_COST_AUDIO,
+                    "transaction_type": "AUDIO_GEN",
+                    "transaction_date": datetime.utcnow(),
+                    "pk_payment": None,
+                }
+
+                await update_user_credits(db, user_credit_info)
+
+                await update_telegram_message(
+                    chat_id, generating_message_id, "💕 Here you go! 💕", bot_token
+                )
+            else:
+                final_message = "Sorry, I couldn't generate the audio. Please try again."
+                await update_telegram_message(
+                    chat_id, generating_message_id, final_message, bot_token
+                )
+                logger.error("Failed to generate audio")
+
+    elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
+        success, generating_message_id = await send_telegram_message(
+            chat_id=chat_id, text="Selecting exclusive photo, please wait.", bot_token=bot_token
+        )
+
+        if success:
+            logger.debug("User is awaiting photo generation")
+            await manage_awaiting_status(
+                db, chat_id=chat_id, channel="TELEGRAM", action="REMOVE"
+            )
+            photo_generation_task = asyncio.create_task(
+                generate_photo_from_text(text=messages[0].content_text)
+            )
+
+            try:
+                while not photo_generation_task.done():
+                    for i in range(4):
+                        if photo_generation_task.done():
+                            break
+                        new_text = f"Selecting exclusive photo, please wait{'.' * (i % 4)}"
+                        await update_telegram_message(
+                            chat_id, generating_message_id, new_text, bot_token
+                        )
+                        await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                pass
+
+            photo_temp_path = await photo_generation_task
+
+            if photo_temp_path:
+                
+                caption = await get_caption_for_local_photo(photo_file_path=photo_temp_path)
+                response_text = await generate_photo_reaction(photo_caption=caption, file_name=photo_temp_path, bot_id=messages[0].bot_id, db=db)
+
+                await send_photo_message(
+                chat_id=chat_id, photo_temp_path=photo_temp_path, bot_token=bot_token, caption=response_text
+                )
+
+                user_credit_info = {
+                "channel": "TELEGRAM",
+                "pk_bot": messages[0].bot_id,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "credits": CREDIT_COST_PHOTO,
+                "transaction_type": "PHOTO_GEN",
+                "transaction_date": datetime.utcnow(),
+                "pk_payment": None,
+                }
+
+                await update_user_credits(db, user_credit_info)
+
+                await update_telegram_message(
+                chat_id, generating_message_id, "💕 Here you go! 💕", bot_token
+                )
+            else:
+                final_message = "Sorry, I couldn't generate a photo from the description provided. Please try again."
+                await update_telegram_message(
+                    chat_id, generating_message_id, final_message, bot_token
+                )
+                logger.error("Failed to generate photo")
+
+    else:
+
+
+        await check_intent(content_text=messages[0].content_text,bot_token=bot_token,chat_id=chat_id)
+
+
+        response_text = await get_chat_completion(chat_id, messages[0].bot_id, db)
+        
+        logger.debug(f"Chat completion response: {response_text}")
+
+
+        humanized_response = humanize_response(response_text)
+
+        for chunk in humanized_response:
+            await send_telegram_message(chat_id, chunk, bot_token)
+
+    await update_message(db, message_pk=ai_placeholder_pk, new_content=response_text)
+    await update_message(db, message_pk=ai_placeholder_pk, new_status="Y")
+
+    for message in messages:
+        await update_message(db, message_pk=message.pk_messages, new_status="Y")
+
+    user_credit_info = {
+        "channel": "TELEGRAM",
+        "pk_bot": messages[0].bot_id,
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "credits": CREDIT_COST_TEXT,
+        "transaction_type": "TEXT_GEN",
+        "transaction_date": datetime.utcnow(),
+        "pk_payment": None,
+    }
+
+    await update_user_credits(db, user_credit_info)
+    
+
+    logger.info(f"{len(messages)} messages processed for chat_id {chat_id}")
+
+def humanize_response(paragraph):
+
+    paragraph = paragraph.replace("¡", "").replace("¿", "")
+    pattern = r"(?<=[.!?]) +"
+
+    records = re.split(pattern, paragraph)
+
+    records = [rec for rec in records if rec.strip()]
+
+    return recordsEnd of file: ./app/controllers/message_processing.py
+___________
+___________
+Start of file: ./app/controllers/telegram_integration.py
+# ./app/controllers/telegram_integration.py
+import httpx
+import logging
+from app.config import TELEGRAM_API_URL, STRIPE_API_KEY, CREDIT_COST_PHOTO, CREDIT_COST_AUDIO
+from app.database_operations import get_latest_total_credits
+from decimal import Decimal
+import asyncio
+import os
+from typing import Tuple, List, Optional
+from functools import partial
+
+logger = logging.getLogger(__name__)
+
+async def update_telegram_message(chat_id: int, message_id: int, new_text: str, bot_token: str) -> bool:
+   """
+   Updates the content of a previously sent message in Telegram.
+   """
+   logger.debug(f"update_telegram_message with bot_token: {bot_token}")
+   url = f'{TELEGRAM_API_URL}{bot_token}/editMessageText'
+   payload = {
+       "chat_id": chat_id,
+       "message_id": message_id,
+       "text": new_text
+   }
+
+   return await send_telegram_request(url, payload)
+
+
+async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> Tuple[bool, int]:
+   """
+   Sends a text message to a user in Telegram.
+   """
+   logger.debug(f"send_telegram_message with bot_token: {bot_token}")
+   await send_typing_action(chat_id, bot_token)
+
+   typing_delay = calculate_typing_delay(text)
+   await asyncio.sleep(typing_delay)
+
+   url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
+   payload = {"chat_id": chat_id, "text": text}
+
+   return await send_telegram_request(url, payload, get_message_id=True)
+
+
+async def send_telegram_error_message(chat_id: int, text: str, bot_token: str) -> bool:
+   logger.debug(f"send_telegram_error_message with bot_token: {bot_token}")
+   url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
+   payload = {"chat_id": chat_id, "text": text}
+
+   return await send_telegram_request(url, payload)
+
+
+async def send_typing_action(chat_id: int, bot_token: str) -> bool:
+   logger.debug(f"send_typing_action with bot_token: {bot_token}")
+   url = f'{TELEGRAM_API_URL}{bot_token}/sendChatAction'
+   payload = {"chat_id": chat_id, "action": "typing"}
+
+   return await send_telegram_request(url, payload)
+
+
+def calculate_typing_delay(message: str) -> float:
+   average_typing_speed_per_minute = 200
+   words = len(message.split())
+   minutes_to_type = words / average_typing_speed_per_minute
+   return max(0.5, minutes_to_type * 60)
+
+
+async def send_audio_message(chat_id: int, audio_file_path: str, bot_token: str) -> bool:
+   """
+   Sends an audio message to a user in Telegram and deletes the file afterwards.
+   """
+   logger.debug(f"send_audio_message with bot_token: {bot_token}")
+   url = f'{TELEGRAM_API_URL}{bot_token}/sendAudio'
+   files = {'audio': open(audio_file_path, 'rb')}
+   data = {"chat_id": chat_id}
+
+   success = await send_telegram_request_with_file(url, files, data)
+
+   files['audio'].close()
+   try:
+       os.remove(audio_file_path)
+       logger.info(f"Successfully deleted audio file: {audio_file_path}")
+   except Exception as e:
+       logger.error(f"Failed to delete audio file: {audio_file_path}. Error: {e}")
+
+   return success
+
+
+
+async def send_voice_note(chat_id: int, audio_file_path: str, bot_token: str) -> bool:
+    """
+    Sends a voice note to a user in Telegram using a voice note stored at a local file path.
+    The function also attempts to delete the voice note file after sending it.
+    """
+    logger.debug(f"send_voice_note with bot_token: {bot_token}")
+    url = f'https://api.telegram.org/bot{bot_token}/sendVoice'
+
+    try:
+        with open(audio_file_path, 'rb') as audio_file:
+            files = {
+                'voice': audio_file
+            }
+            data = {
+                'chat_id': chat_id
+            }
+            logger.debug(f"Sending voice note to chat_id {chat_id} with voice note from {audio_file_path}")
+            success = await send_telegram_request_with_file(url, files, data)
+            if success:
+                logger.info(f"Voice note sent successfully to chat_id {chat_id}")
+    except FileNotFoundError:
+        logger.error(f"File not found: {audio_file_path}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error in send_voice_note: {str(e)}")
+        return False
+
+    try:
+        os.remove(audio_file_path)
+        logger.info(f"Successfully deleted voice note file: {audio_file_path}")
+    except Exception as e:
+        logger.error(f"Failed to delete voice note file: {audio_file_path}. Error: {e}")
+    
+    return success
+
+async def send_photo_message(chat_id: int, photo_temp_path: str, bot_token: str, caption: str = None) -> bool:
+   """
+   Sends a photo message to a user in Telegram using a photo stored at a local file path with an optional caption.
+   """
+   logger.debug(f"send_photo_message with bot_token: {bot_token}")
+   url = f'https://api.telegram.org/bot{bot_token}/sendPhoto'
+
+   try:
+       with open(photo_temp_path, 'rb') as photo_file:
+           files = {
+               'photo': photo_file
+           }
+           data = {
+               'chat_id': str(chat_id),
+               'caption': caption
+           }
+           logger.debug(f"Sending photo message to chat_id {chat_id} with photo from {photo_temp_path} and caption '{caption}'")
+           success = await send_telegram_request_with_file(url, files, data)
+           if success:
+               logger.info(f"Photo message sent successfully to chat_id {chat_id} with caption '{caption}'")
+           return success
+   except FileNotFoundError:
+       logger.error(f"File not found: {photo_temp_path}")
+   except Exception as e:
+       logger.error(f"Unexpected error in send_photo_message: {str(e)}")
+   return False
+
+
+
+async def send_generate_options(chat_id: int, bot_token: str):
+   keyboard = {
+       "inline_keyboard": [
+           [{"text": f"📸 See Me - (Cost {CREDIT_COST_PHOTO} Credits)", "callback_data": "generate_photo"}],
+           [{"text": f"🔊 Hear Me - (Cost {CREDIT_COST_AUDIO} Credits)", "callback_data": "generate_audio"}]
+       ]
+   }
+
+   text = "💕 Let's make this moment special. 💕 \n\n📸 See Me - Choose and describe your perfect photo of me. \n\n🔊 Hear Me - Pick and tell me what sweet nothings you'd like to hear."
+   payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+   await send_telegram_request(f"{TELEGRAM_API_URL}{bot_token}/sendMessage", payload)
+
+
+async def send_credit_count(chat_id: int, bot_token: str, total_credits: Decimal):
+   keyboard = {
+       "inline_keyboard": [[{"text": "Want more? 💦", "callback_data": "ask_credit"}]]
+   }
+
+   text = f"💕 You have {str(total_credits)} credits left 💕"
+   payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+   await send_telegram_request(f"https://api.telegram.org/bot{bot_token}/sendMessage", payload)
+
+
+async def send_credit_purchase_options(chat_id: int, bot_token: str):
+   keyboard = {
+       "inline_keyboard": [
+           [{"text": "😈 Unlock Fun! - 100 Credits. Begin the adventure.", "callback_data": "buy_100_credits"}],
+           [{"text": "🍆 Boost Power! - 500 Credits. Amplify the thrill.", "callback_data": "buy_500_credits"}],
+           [{"text": "💦 Give me all! - 1000 Credits. So much to do!", "callback_data": "buy_1000_credits"}]
+       ]
+   }
+
+   text = "🔥 Ignite your desires with exclusive access. Choose your pleasure:"
+   payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+   await send_telegram_request(f"{TELEGRAM_API_URL}{bot_token}/sendMessage", payload)
+
+
+async def send_request_for_audio(chat_id: int, bot_token: str):
+    keyboard = {
+        "inline_keyboard": [[{"text": "Yes, send me a voice note! 🎙️", "callback_data": "generate_audio"}]]
+    }
+    text = "Do you want to receive a voice note?"
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    await send_telegram_request(f"https://api.telegram.org/bot{bot_token}/sendMessage", payload)
+
+async def send_request_for_photo(chat_id: int, bot_token: str):
+    keyboard = {
+        "inline_keyboard": [[{"text": "Yes, show me a photo! 📸", "callback_data": "generate_photo"}]]
+    }
+    text = "Do you want to see a photo?"
+    payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+    await send_telegram_request(f"https://api.telegram.org/bot{bot_token}/sendMessage", payload)
+
+
+async def send_reset_options(chat_id: int, bot_token: str):
+   keyboard = {
+       "inline_keyboard": [
+           [{"text": "Yes", "callback_data": "reset_yes"}],
+           [{"text": "No", "callback_data": "reset_no"}]
+       ]
+   }
+
+   text = "This will reset your chat history and will wipe all the bot memory. Your credits will remain. Are you sure?"
+   payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
+   await send_telegram_request(f"{TELEGRAM_API_URL}{bot_token}/sendMessage", payload)
+
+
+async def answer_pre_checkout_query(pre_checkout_query_id: str, ok: bool, bot_token: str, error_message: str = None):
+   url = f'{TELEGRAM_API_URL}{bot_token}/answerPreCheckoutQuery'
+   payload = {
+       "pre_checkout_query_id": pre_checkout_query_id,
+       "ok": ok,
+       "error_message": error_message
+   }
+
+   await send_telegram_request(url, payload)
+
+
+async def send_invoice(
+   chat_id: int, title: str, description: str, payload: str,
+   currency: str, prices, bot_token: str, start_parameter: str = '', provider_data: str = '',
+   photo_url: str = '', photo_size: int = 0, photo_width: int = 0, photo_height: int = 0,
+   need_name: bool = False, need_phone_number: bool = False, need_email: bool = False,
+   need_shipping_address: bool = False, send_phone_number_to_provider: bool = False,
+   send_email_to_provider: bool = False, is_flexible: bool = False,
+   disable_notification: bool = False, protect_content: bool = False,
+   reply_markup: Optional[str] = None
+) -> Tuple[bool, int]:
+   """
+   Sends an invoice to a user in Telegram with optional parameters included.
+   """
+   url = f'{TELEGRAM_API_URL}{bot_token}/sendInvoice'
+   payload = {
+       "chat_id": chat_id,
+       "title": title,
+       "description": description,
+       "payload": payload,
+       "provider_token": STRIPE_API_KEY,
+       "currency": currency,
+       "prices": prices,
+       "start_parameter": start_parameter,
+       "provider_data": provider_data,
+       "photo_url": photo_url,
+       "photo_size": photo_size,
+       "photo_width": photo_width,
+       "photo_height": photo_height,
+       "need_name": need_name,
+       "need_phone_number": need_phone_number,
+       "need_email": need_email,
+       "need_shipping_address": need_shipping_address,
+       "send_phone_number_to_provider": send_phone_number_to_provider,
+       "send_email_to_provider": send_email_to_provider,
+       "is_flexible": is_flexible,
+       "disable_notification": disable_notification,
+       "protect_content": protect_content
+   }
+
+   if reply_markup is not None:
+       payload["reply_markup"] = reply_markup
+
+   return await send_telegram_request(url, payload, get_message_id=True)
+
+
+async def send_telegram_request(url, payload, get_message_id=False):
+   try:
+       async with httpx.AsyncClient() as client:
+           response = await client.post(url, json=payload)
+           response.raise_for_status()
+           if get_message_id:
+               message_id = response.json().get('result', {}).get('message_id', 0)
+               return True, message_id
+           return True
+   except httpx.HTTPStatusError as e:
+       logger.error(f"HTTP error: {e}")
+       logger.error(f"Request payload: {payload}")
+       logger.error(f"Response content: {response.content}")
+   except Exception as e:
+       logger.error(f"Unexpected error: {str(e)}")
+   return False, 0
+
+
+async def send_telegram_request_with_file(url, files, data=None):
+   try:
+       async with httpx.AsyncClient() as client:
+           response = await client.post(url, files=files, data=data)
+           response.raise_for_status()
+           return True
+   except httpx.HTTPStatusError as e:
+       logger.error(f"HTTP error: {e}")
+   except Exception as e:
+       logger.error(f"Unexpected error: {str(e)}")
+   return FalseEnd of file: ./app/controllers/telegram_integration.py
+___________
+___________
+Start of file: ./app/controllers/__init__.py
+from fastapi import APIRouter
+# from app.routers.message_controller import router as message_router
+
+router = APIRouter()
+
+# router.include_router(message_router)
+End of file: ./app/controllers/__init__.py
+___________
+___________
+Start of file: ./app/database.py
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from app.config import SQLALCHEMY_DATABASE_URL
+from contextlib import asynccontextmanager
+
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("No SQLALCHEMY_DATABASE_URL set in environment")
+
+engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True)
+
+AsyncSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    class_=AsyncSession
+)
+
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+End of file: ./app/database.py
+___________
+___________
+Start of file: ./app/database_operations.py
+# app/database_operations.py
+from sqlalchemy.orm import Session
+from sqlalchemy.future import select
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import update, and_, func
+from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import List, Union, Type
+
+
+
+from app.models import (
+    tbl_msg, TelegramConfig, tbl_300_awaiting_user_input,
+    Payment, UserCredit, tbl_150_user_info
+)
+from app.schemas import TextMessage
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+async def get_bot_config(db: AsyncSession, return_type: str = None, bot_id: int = None, bot_short_name: str = None) -> Union[str, int, tuple, None]:
+    try:
+        async with db as session:
+            
+            if bot_id is not None:
+                logger.debug(f"Fetching bot config for bot_id: {bot_id}")
+                query = select(TelegramConfig.bot_token, TelegramConfig.bot_short_name, TelegramConfig.bot_voice_id).where(TelegramConfig.pk_bot == bot_id)
+                result = await session.execute(query)
+                bot_config = result.one_or_none()
+                logger.debug(f"Bot config fetched for bot_id {bot_id}: {bot_config}")
+                if bot_config:
+                    bot_token, bot_short_name, bot_voice_id = bot_config
+                    logger.debug(f"Extracted bot_token: {bot_token}, bot_short_name: {bot_short_name}")
+                    if return_type == 'token':
+                        logger.debug(f"Returning bot_token: {bot_token}")
+                        return bot_token
+                    elif return_type == 'short_name':
+                        logger.debug(f"Returning bot_short_name: {bot_short_name}")
+                        return bot_short_name
+                    elif return_type == 'voice_id':
+                        logger.debug(f"Returning bot_voice_id: {bot_voice_id}")
+                        return bot_voice_id
+                    else:
+                        logger.debug(f"Returning both bot_token and bot_short_name")
+                        return bot_token, bot_short_name
+            elif bot_short_name is not None:
+                logger.debug(f"Fetching bot_id for bot_short_name: {bot_short_name}")
+                query = select(TelegramConfig.pk_bot).where(TelegramConfig.bot_short_name == bot_short_name)
+                result = await session.execute(query)
+                bot_id = result.scalar_one_or_none()
+                logger.debug(f"Fetched bot_id {bot_id} for bot_short_name: {bot_short_name}")
+                return bot_id
+            else:
+                logger.debug("No bot_id or bot_short_name provided")
+                return None
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_bot_config: {e}")
+        return None
+
+async def add_messages(db: AsyncSession, messages_info: List[dict]) -> List[Type[tbl_msg]]:
+    new_messages = []
+    for message_info in messages_info:
+        message_data = message_info['message_data']
+        role = message_info['role']
+        message_type = message_info.get('type', 'TEXT')
+        is_processed = message_info.get('is_processed', 'N')
+
+        new_message = tbl_msg(
+            chat_id=message_data.chat_id,
+            user_id=message_data.user_id,
+            bot_id=message_data.bot_id,
+            content_text=message_data.message_text,
+            message_id=message_data.message_id,
+            channel=message_data.channel,
+            update_id=message_data.update_id,
+            message_date=datetime.utcnow(),
+            type=message_type,
+            is_processed=is_processed,
+            is_reset='N',
+            role=role
+        )
+        db.add(new_message)
+        new_messages.append(new_message)
+
+    await db.commit()
+    for new_message in new_messages:
+        await db.refresh(new_message)
+
+    logger.debug(f"Messages added: {[message.pk_messages for message in new_messages]}")
+    return new_messages
+
+
+
+async def update_message(db: AsyncSession, message_pk: int, new_content: str = None, new_status: str = None):
+    try:
+        query = select(tbl_msg).where(tbl_msg.pk_messages == message_pk)
+        result = await db.execute(query)
+        message = result.scalar_one_or_none()
+        if message:
+            if new_content:
+                message.content_text = new_content
+                logger.info(f"Updated content_text for message with pk {message_pk}")
+            if new_status:
+                message.is_processed = new_status
+                logger.info(f"Message with pk {message_pk} marked as {new_status}")
+            await db.commit()
+        else:
+            logger.warning(f"No message found with pk {message_pk}")
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in update_message: {e}")
+        raise
+
+
+async def reset_messages_by_chat_id(db: AsyncSession, chat_id: int) -> None:
+    try:
+        query = select(tbl_msg).where(tbl_msg.chat_id == chat_id)
+        result = await db.execute(query)
+        messages = result.scalars().all()
+
+        if messages:
+            for message in messages:
+                message.is_reset = 'Y'
+            await db.commit()
+            logger.info(f"All messages for chat_id {chat_id} have been marked as reset")
+        else:
+            logger.warning(f"No messages found for chat_id {chat_id}")
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in reset_messages_by_chat_id: {e}")
+        raise
+
+async def manage_awaiting_status(db: AsyncSession, channel: str, chat_id: int, bot_id: int = None, user_id: int = None,
+                                 awaiting_type: str = None, status: str = "AWAITING", action: str = "INSERT"):
+    try:
+        if action == "REMOVE":
+            # Update all records with the given chat_id to "PROCESSED" status
+            update_stmt = (
+                update(tbl_300_awaiting_user_input)
+                .where(tbl_300_awaiting_user_input.chat_id == chat_id)
+                .values(status="PROCESSED")
+            )
+            await db.execute(update_stmt)
+            await db.commit()
+            return True
+
+        existing_query = select(tbl_300_awaiting_user_input).where(
+            tbl_300_awaiting_user_input.channel == channel,
+            tbl_300_awaiting_user_input.chat_id == chat_id,
+            tbl_300_awaiting_user_input.bot_id == bot_id,
+            tbl_300_awaiting_user_input.user_id == user_id,
+            tbl_300_awaiting_user_input.awaiting_type == awaiting_type,
+            tbl_300_awaiting_user_input.status == status
+        )
+        existing_record = await db.execute(existing_query)
+        existing_record = existing_record.scalar_one_or_none()
+
+        if action == "INSERT" and not existing_record:
+            new_awaiting_input = tbl_300_awaiting_user_input(
+                channel=channel,
+                chat_id=chat_id,
+                bot_id=bot_id,
+                user_id=user_id,
+                awaiting_type=awaiting_type,
+                status=status
+            )
+            db.add(new_awaiting_input)
+            await db.commit()
+            return True
+        elif action == "UPDATE" and existing_record:
+            existing_record.status = "PROCESSED"
+            await db.commit()
+            return True
+        else:
+            return False
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in manage_awaiting_status: {e}")
+        return False
+
+
+async def check_if_chat_is_awaiting(db: AsyncSession, chat_id: int, awaiting_type: str) -> bool:
+    query = select(tbl_300_awaiting_user_input).where(
+        tbl_300_awaiting_user_input.chat_id == chat_id,
+        tbl_300_awaiting_user_input.awaiting_type == awaiting_type,
+        tbl_300_awaiting_user_input.status == "AWAITING"
+    )
+    result = await db.execute(query)
+    return result.scalar_one_or_none() is not None
+
+
+async def get_bot_assistant_prompt(bot_id: int, db: AsyncSession) -> str:
+    try:
+        query = select(TelegramConfig.bot_assistant_prompt).where(TelegramConfig.pk_bot == bot_id)
+        result = await db.execute(query)
+        bot_assistant_prompt = result.scalar_one_or_none()
+
+        if bot_assistant_prompt:
+            logger.info(f"Retrieved bot_assistant_prompt for bot_id {bot_id}")
+        else:
+            logger.warning(f"No bot_assistant_prompt found for bot_id {bot_id}")
+
+        return bot_assistant_prompt
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_bot_assistant_prompt: {e}")
+        return ''
+
+
+async def add_payment_details(db: AsyncSession, payment_info: dict) -> int:
+    new_payment = Payment(**payment_info)
+    db.add(new_payment)
+    await db.commit()
+    await db.refresh(new_payment)
+    logger.info(f"add_payment_details {new_payment.pk_payment}")
+    return new_payment.pk_payment
+
+
+async def get_latest_total_credits(db: AsyncSession, user_id: int, bot_id: int) -> Decimal:
+    try:
+        latest_credit = await db.execute(
+            select(UserCredit.total_credits)
+            .where(UserCredit.user_id == user_id, UserCredit.pk_bot == bot_id)
+            .order_by(UserCredit.pk_credit.desc())
+            .limit(1)
+        )
+        latest_credit_value = latest_credit.scalar_one_or_none()
+        logger.debug(f"For user_id={user_id}, pk_bot={bot_id}. latest_credit_value: {latest_credit_value}")
+        return Decimal(latest_credit_value) if latest_credit_value is not None else Decimal(0)
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_latest_total_credits: {e}")
+        return Decimal(0)
+
+
+async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
+    user_id = user_credit_info['user_id']
+    pk_bot = user_credit_info['pk_bot']
+    credits_to_add = Decimal(user_credit_info['credits'])
+
+    logger.debug(f"Updating credits for user_id={user_id}, pk_bot={pk_bot}. Adding credits: {credits_to_add}")
+
+    latest_total_credits = await get_latest_total_credits(db, user_id, pk_bot)
+
+    if latest_total_credits is None:
+        latest_total_credits = Decimal('0')
+        logger.debug(f"No existing credits found for user_id={user_id}. Initializing to 0.")
+
+    updated_total_credits = latest_total_credits + credits_to_add
+
+    logger.debug(f"User_id={user_id} had {latest_total_credits} credits. After adding {credits_to_add}, new total is {updated_total_credits}.")
+
+    user_credit_info['total_credits'] = updated_total_credits
+
+    new_credit = UserCredit(**user_credit_info)
+    db.add(new_credit)
+    await db.commit()
+
+    logger.info(f"Successfully updated credits for user_id={user_id}. New total credits: {updated_total_credits}. Details: {user_credit_info}")
+
+
+async def insert_user_if_not_exists(db: AsyncSession, user_data: dict) -> bool:
+    query = select(tbl_150_user_info).where(
+        tbl_150_user_info.id == user_data['id'],
+        tbl_150_user_info.pk_bot == user_data['pk_bot'],
+        tbl_150_user_info.channel == user_data['channel']
+    )
+    existing_user = await db.execute(query)
+    if existing_user.scalars().first() is not None:
+        logger.info("User already exists, skipping insertion.")
+        return False
+
+    try:
+        new_user = tbl_150_user_info(**user_data)
+        db.add(new_user)
+        await db.commit()
+        logger.info("New user inserted successfully.")
+
+        # Adding initial 50 credits gift
+        user_credit_info = {
+            "channel": "TELEGRAM",
+            "pk_bot": user_data['pk_bot'],
+            "user_id": user_data['id'],
+            "chat_id": user_data['chat_id'],
+            "credits": Decimal('50'),
+            "transaction_type": "FIRST_TIME_USER",
+            "transaction_date": datetime.utcnow(),
+            "pk_payment": None
+        }
+        await update_user_credits(db, user_credit_info)
+        return True
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Failed to insert new user: {e}")
+        return False
+
+
+async def is_user_banned(db: AsyncSession, id: int, pk_bot: int, channel: str) -> bool:
+    query = select(tbl_150_user_info.is_banned).where(
+        tbl_150_user_info.id == id,
+        tbl_150_user_info.pk_bot == pk_bot,
+        tbl_150_user_info.channel == channel
+    )
+    result = await db.execute(query)
+    is_banned = result.scalar_one_or_none()
+    if is_banned is None:
+        logger.warning("User not found.")
+        return False  # Assuming not banned if the user doesn't exist for safety
+    return is_banned
+
+
+
+async def get_users_for_auto_reply(db: AsyncSession) -> set:
+    """
+    Fetch users whose last message was sent more than 5 minutes ago.
+    """
+    cutoff_time = datetime.utcnow() - timedelta(minutes=240)
+    user_info_set = set()
+
+    try:
+        # First, group messages by user and find the most recent message time for each
+        recent_messages_subq = (
+            select(
+                tbl_msg.chat_id,
+                tbl_msg.user_id,
+                tbl_msg.bot_id,
+                func.max(tbl_msg.message_date).label('last_message_time')
+            )
+            .group_by(tbl_msg.chat_id, tbl_msg.user_id, tbl_msg.bot_id)
+            .subquery()
+        )
+
+        # Then, select those users whose last message was more than 5 minutes ago
+        query = (
+            select(
+                recent_messages_subq.c.chat_id,
+                recent_messages_subq.c.user_id,
+                recent_messages_subq.c.bot_id
+            )
+            .where(recent_messages_subq.c.last_message_time < cutoff_time)
+        )
+
+        result = await db.execute(query)
+        rows = result.fetchall()
+
+        for row in rows:
+            # Optionally, fetch bot_short_name if needed using the bot_id
+            # This might require an additional query per row, consider caching or optimizing
+            bot_short_name =  await get_bot_config(db,  return_type='short_name', bot_id=row.bot_id)   # Simplification for illustration
+            user_info_set.add((row.chat_id, row.user_id, bot_short_name))
+
+        return user_info_set
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_users_for_auto_reply: {e}")
+        return set()
+End of file: ./app/database_operations.py
+___________
+___________
+Start of file: ./app/logging_config.py
+import logging
+from logging.config import dictConfig
+from logging import StreamHandler
+
+class CustomFormatter(logging.Formatter):
+    """Custom formatter to add color for terminal output for different log levels."""
+    FORMATS = {
+        logging.DEBUG: "%(asctime)s - %(name)s - [DEBUG] - %(message)s",
+        logging.INFO: "%(asctime)s - %(name)s - [INFO] - %(message)s",
+        logging.WARNING: "%(asctime)s - %(name)s - [WARNING] - %(message)s",
+        logging.ERROR: "\033[91m%(asctime)s - %(name)s - [ERROR] - %(message)s\033[0m",  # Red color for errors
+        logging.CRITICAL: "\033[91m%(asctime)s - %(name)s - [CRITICAL] - %(message)s\033[0m",  # Red color for critical
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
+def setup_logging():
+    logging_config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'standard': {
+                # Added emojis for visual differentiation of log levels
+                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                'datefmt': '%Y-%m-%d %H:%M:%S'
+            },
+        },
+        'handlers': {
+            'default': {
+                'level': 'DEBUG',
+                'formatter': 'standard',
+                'class': 'logging.StreamHandler',
+            },
+            'sqlalchemy_engine': {
+                'level': 'WARN',
+                'class': 'logging.StreamHandler',
+                'formatter': 'standard',
+            },
+        },
+        'loggers': {
+            '': {
+                'handlers': ['default'],
+                'level': 'DEBUG',
+                'propagate': True
+            },
+            'sqlalchemy.engine': {
+                'handlers': ['sqlalchemy_engine'],
+                'level': 'WARN',
+                'propagate': False
+            },
+        }
+    }
+
+    # Customizing the format with icons for different log levels
+    logging_config['formatters']['standard']['format'] = (
+        '%(asctime)s - %(name)s - '
+        + {
+            'DEBUG': '🐛 DEBUG',
+            'INFO': 'ℹ️ INFO',
+            'WARNING': '⚠️ WARNING',
+            'ERROR': '❗️ ERROR',
+            'CRITICAL': '‼️ CRITICAL'
+        }.get('%(levelname)s', '%(levelname)s') + ' - %(message)s'
+    )
+
+    dictConfig(logging_config)
+End of file: ./app/logging_config.py
+___________
+___________
+Start of file: ./app/models/awaiting_user_input.py
+#app/models/awaiting_user_input.py
+from sqlalchemy import Column, BigInteger, String, Integer
+from sqlalchemy.ext.declarative import declarative_base
+from . import Base
+
+class tbl_300_awaiting_user_input(Base):
+    __tablename__ = 'tbl_300_awaiting_user_input'
+    
+    pk_user_status = Column(Integer, primary_key=True, autoincrement=True)
+    channel = Column(String(100))
+    bot_id = Column(BigInteger)
+    user_id = Column(BigInteger)
+    chat_id = Column(BigInteger)
+    awaiting_type = Column(String(100))
+    status = Column(String(100))
+
+    def __repr__(self):
+        return f"<tbl_300_awaiting_user_input(pk_user_status={self.pk_user_status}, channel='{self.channel}', bot_id={self.bot_id}, user_id={self.user_id}, chat_id={self.chat_id}, awaiting_type='{self.awaiting_type}', status='{self.status}')>"
+End of file: ./app/models/awaiting_user_input.py
+___________
+___________
+Start of file: ./app/models/message.py
+#app/models/message.py
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, func
+from sqlalchemy.ext.declarative import declarative_base
+from . import Base
+
+class tbl_msg(Base):
+    __tablename__ = 'tbl_200_messages'
+
+    pk_messages = Column(Integer, primary_key=True, index=True)  # Changed from id to pk_messages
+    channel = Column(String(100))
+    bot_id = Column(BigInteger, nullable=False) # NOT NULL constraint specified here
+    chat_id = Column(BigInteger)
+    user_id = Column(BigInteger)
+    type = Column(String(100))
+    role = Column(String(100))
+    content_text = Column(String(4000))
+    file_id = Column(String(4000))
+    message_date = Column(DateTime) # This matches the TIMESTAMP in your SQL
+    update_id = Column(BigInteger)
+    message_id = Column(BigInteger)
+    is_processed = Column(String(1))
+    is_reset = Column(String(1))
+    created_by = Column(String(1000))
+    created_on = Column(DateTime, default=func.now()) # Default to the current timestamp
+    updated_by = Column(String(1000))
+    updated_on = Column(DateTime, default=func.now(), onupdate=func.now()) # Updated timestamp on update
+End of file: ./app/models/message.py
+___________
+___________
+Start of file: ./app/models/payments.py
+# In ./app/models/payments.py
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, Boolean, DECIMAL
+from sqlalchemy.ext.declarative import declarative_base
+from datetime import datetime
+from . import Base
+
+class Payment(Base):
+    __tablename__ = 'tbl_400_payments'
+
+    pk_payment = Column(Integer, primary_key=True, autoincrement=True)
+    update_id = Column(BigInteger, nullable=False)
+    message_id = Column(BigInteger, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
+    user_is_bot = Column(Boolean, default=False)
+    user_first_name = Column(String(100))
+    user_language_code = Column(String(10))
+    chat_id = Column(BigInteger, nullable=False)
+    chat_first_name = Column(String(100))
+    chat_type = Column(String(50), nullable=False)
+    payment_date = Column(DateTime, default=datetime.utcnow)
+    currency = Column(String(10))
+    total_amount = Column(DECIMAL(precision=10, scale=2))
+    invoice_payload = Column(String(4000))
+    telegram_payment_charge_id = Column(String(400))
+    provider_payment_charge_id = Column(String(400))
+    created_on = Column(DateTime, default=datetime.utcnow)
+    updated_on = Column(DateTime, onupdate=datetime.utcnow)
+End of file: ./app/models/payments.py
+___________
+___________
+Start of file: ./app/models/telegram_config.py
+# app/models/telegram_config.py
+from sqlalchemy import Column, Integer, String, DateTime
+from . import Base
+
+class TelegramConfig(Base):
+    __tablename__ = 'tbl_100_telegram_config'
+
+    pk_bot = Column(Integer, primary_key=True, index=True)
+    bot_name = Column(String(100))
+    bot_short_name = Column(String(100))
+    bot_description = Column(String(4000))
+    bot_token = Column(String(4000))
+    bot_voice_id = Column(String(4000))
+    bot_assistant_prompt = Column(String(4000))
+    bot_pre_prompt = Column(String(4000))
+    bot_temperature = Column(Integer)
+    bot_presence_penalty = Column(Integer)
+    bot_frequency_penalty = Column(Integer)
+    bot_default_reply = Column(String(4000))
+    created_by = Column(String(1000))
+    created_on = Column(DateTime)
+    updated_by = Column(String(1000))
+    updated_on = Column(DateTime)
+End of file: ./app/models/telegram_config.py
+___________
+___________
+Start of file: ./app/models/user_credits.py
+
+# In ./app/models/user_credits.py
+from sqlalchemy import Column, Integer, BigInteger, String, DateTime, Float, ForeignKey, DECIMAL
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from app.models.payments import Payment
+from datetime import datetime
+from . import Base
+
+class UserCredit(Base):
+    __tablename__ = 'tbl_450_user_credits'
+
+    pk_credit = Column(Integer, primary_key=True, autoincrement=True)
+    channel = Column(String(100))
+    pk_bot = Column(BigInteger, nullable=False)
+    user_id = Column(BigInteger, nullable=False)
+    chat_id = Column(BigInteger, nullable=False)
+    credits = Column(DECIMAL(precision=10, scale=2))
+    transaction_type = Column(String(100))
+    transaction_date = Column(DateTime, default=datetime.utcnow)
+    pk_payment = Column(BigInteger)
+    total_credits = Column(DECIMAL(precision=10, scale=2))
+    End of file: ./app/models/user_credits.py
+___________
+___________
+Start of file: ./app/models/user_info.py
+# In ./app/models/user_info.py
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, TIMESTAMP
+from sqlalchemy.sql import func
+from . import Base
+
+class tbl_150_user_info(Base):
+    __tablename__ = 'tbl_150_user_info'
+
+    pk_user_id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, nullable=False)
+    chat_id = Column(BigInteger, nullable=False)
+    is_bot = Column(Boolean, nullable=False)
+    first_name = Column(String(255), nullable=False)
+    last_name = Column(String(255))
+    username = Column(String(255))
+    language_code = Column(String(10))
+    is_premium = Column(Boolean)
+    created_on = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    is_banned = Column(Boolean, nullable=False, default=False)
+    pk_bot = Column(Integer)
+    channel = Column(String(100))
+End of file: ./app/models/user_info.py
+___________
+___________
+Start of file: ./app/models/__init__.py
+from sqlalchemy.ext.declarative import declarative_base
+Base = declarative_base()
+
+
+from .telegram_config import TelegramConfig
+from .message import tbl_msg
+from .awaiting_user_input import tbl_300_awaiting_user_input
+from .payments import Payment
+from .user_credits import UserCredit
+from .user_info import tbl_150_user_infoEnd of file: ./app/models/__init__.py
+___________
+___________
+Start of file: ./app/routers/keep_alive.py
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/keep-alive")
+async def keep_alive():
+    """
+    A simple endpoint to keep the web service alive by making lightweight requests.
+    """
+    return {"message": "Service is alive."}
+End of file: ./app/routers/keep_alive.py
+___________
+___________
+Start of file: ./app/routers/telegram_webhook.py
+import logging
+import os
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks, Depends
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.schemas import TextMessage
+from app.database import get_db
+from app.database_operations import (
+    check_if_chat_is_awaiting, insert_user_if_not_exists, is_user_banned, add_messages,  get_bot_config, reset_messages_by_chat_id, manage_awaiting_status, get_latest_total_credits, add_payment_details, update_user_credits
+)
+from app.controllers.telegram_integration import send_reset_options, send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
+from app.controllers.message_processing import process_queue
+from app.utils.process_audio import transcribe_audio
+from app.utils.process_photo import caption_photo
+
+from decimal import Decimal
+
+from datetime import datetime
+from app.utils.error_handler import error_handler, send_error_notification
+from app.config import TELEGRAM_SECRET_TOKEN
+
+logger = logging.getLogger(__name__)
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+
+class Voice(BaseModel):
+    duration: int
+    mime_type: str
+    file_id: str
+    file_size: int
+
+class PhotoSize(BaseModel):
+    file_id: str
+    file_unique_id: str
+    file_size: int
+    width: int
+    height: int
+
+class Document(BaseModel):
+    file_id: str
+    file_unique_id: str
+    file_size: int
+    file_name: str
+    mime_type: str
+    thumb: PhotoSize = None
+
+class SuccessfulPayment(BaseModel):
+    currency: str
+    total_amount: int
+    invoice_payload: str
+    shipping_option_id: Optional[str] = None
+    order_info: Optional[dict] = None
+    telegram_payment_charge_id: str
+    provider_payment_charge_id: str
+
+class Message(BaseModel):
+    message_id: int
+    from_: dict = Field(None, alias='from')
+    chat: dict
+    date: int
+    text: Optional[str] = None
+    voice: Optional[Voice] = None
+    photo: Optional[List[PhotoSize]] = None
+    document: Optional[Document] = None
+    caption: Optional[str] = None
+    successful_payment: Optional[SuccessfulPayment] = None
+
+class CallbackQuery(BaseModel):
+    id: str
+    from_: dict = Field(None, alias='from')
+    message: Optional[Message] = None  # Ensure Message is defined as per your existing model
+    data: str
+
+class PreCheckoutQuery(BaseModel):
+    id: str
+    from_: dict = Field(..., alias='from')
+    currency: str
+    total_amount: int
+    invoice_payload: str
+    shipping_option_id: Optional[str] = None
+    order_info: Optional[dict] = None
+    
+class TelegramWebhookPayload(BaseModel):
+    update_id: int
+    message: Optional[Message] = None
+    callback_query: Optional[CallbackQuery] = None
+    pre_checkout_query: Optional[PreCheckoutQuery] = None
+    
+
+router = APIRouter()
+
+
+
+
+async def process_message_type(message_data, chat_id, user_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
+    message_type, process_task, text_prefix = None, None, ""
+    ai_placeholder = "[AI PLACEHOLDER]"
+    task_params = {} 
+
+    # Check if the message text starts with "/" and is not a recognized command
+    if message_data.text and message_data.text.startswith("/") and message_data.text not in ["/start", "/generate", "/getvoice", "/getphoto", "/credits", "/payment", "/reset"]:
+        # Log the ignored unknown command for debugging purposes
+        logger.info(f"Ignoring unknown command: {message_data.text}")
+        return  # Ignore the message and return early
+
+    if message_data.text:
+        message_type = 'TEXT'
+        text_prefix = message_data.text
+        if message_data.text == "/start":
+            predefined_response_text = "Hi I'm Tabatha! What about you?"
+            await send_telegram_message(chat_id, predefined_response_text, await get_bot_config(db, return_type='token', bot_id=bot_id))
+            text_prefix = "/start"
+            ai_placeholder = predefined_response_text
+        else:
+            # Before deciding on the generic process_task, check if the chat is awaiting specific input
+            if await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="AUDIO"):
+                text_prefix = f"[USER REQUESTED AUDIO] {message_data.text}"
+                # Adjust process_task and task_params as needed for AUDIO processing
+                process_task = process_queue  
+                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+            elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
+                text_prefix = f"[USER REQUESTED PHOTO] {message_data.text}"
+                # Adjust process_task and task_params as needed for PHOTO processing
+                process_task = process_queue  
+                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+            else:
+                process_task = process_queue
+                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+                logger.info(f"task_params text set")
+
+    elif message_data.photo:
+        message_type = 'PHOTO'
+        process_task = caption_photo
+        text_prefix = "[PROCESSING PHOTO]"
+        user_caption = message_data.caption if message_data.caption else None
+        task_params = { 'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db, 'user_caption': user_caption}
+
+    elif message_data.document and message_data.document.mime_type.startswith("image/"):
+        message_type = 'DOCUMENT'
+        process_task = caption_photo
+        text_prefix = "[PROCESSING DOCUMENT AS PHOTO]"
+        user_caption = message_data.caption if message_data.caption else None
+        task_params = {'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db,'user_caption': user_caption}
+
+    elif message_data.voice:
+        message_type = 'AUDIO'
+        process_task = transcribe_audio
+        text_prefix = "[TRANSCRIBING AUDIO]"
+        task_params = {'background_tasks': background_tasks, 'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db}  # common parameters for transcribe_audio
+
+    if message_type:
+        
+        messages_info = [
+            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
+            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text=ai_placeholder, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
+        ]
+
+        logger.info(f"added_messages 1")
+        added_messages = await add_messages(db, messages_info)
+        logger.info(f"added_messages 2")
+        if process_task and len(added_messages) > 1:
+            # Add specific parameters based on the message type
+            task_specific_params = {'message_pk': added_messages[0].pk_messages, 'ai_placeholder_pk': added_messages[1].pk_messages}
+            if message_data.photo or message_data.voice or message_data.document:
+                task_specific_params['file_id'] = message_data.photo[-1].file_id if message_data.photo else message_data.document.file_id if message_data.document else message_data.voice.file_id
+            
+            all_task_params = {**task_params, **task_specific_params}  # Merge common and specific parameters
+            background_tasks.add_task(process_task, **all_task_params)
+            logger.info(f"background_tasks set")
+
+@router.post("/telegram-webhook/{token}/{bot_short_name}")
+@error_handler
+async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str, db: AsyncSession = Depends(get_db)):
+    chat_id = None  # Declare chat_id outside the try block for wider scope
+    user_id = None  # Similarly, declare user_id for broader access
+    bot_token = None  # Similarly, declare bot_token for broader access
+    if token != TELEGRAM_SECRET_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid token")
+    try:
+        payload = await request.json()
+        logger.debug('Raw JSON Payload: %s', payload)
+        payload_obj = TelegramWebhookPayload(**payload)
+
+        logger.debug('Parsed Payload: %s', payload_obj.dict())
+        bot_id = await get_bot_config( db, bot_short_name=bot_short_name)
+        bot_token = await get_bot_config(db,  return_type='token', bot_id=bot_id)
+
+        # Handling callback_query for inline keyboard responses
+        if 'callback_query' in payload:
+            callback_query = payload['callback_query']
+            chat_id = callback_query['message']['chat']['id']
+            user_id = callback_query['from']['id']
+            data = callback_query['data']
+
+            if data.startswith("buy_"):
+                credit_amounts = {
+                    "buy_100_credits": 500,
+                    "buy_500_credits": 2000,
+                    "buy_1000_credits": 3500
+                }
+                titles = {
+                    "buy_100_credits": "💎 100 Credits - Unlock More Fun!",
+                    "buy_500_credits": "🚀 500 Credits - Boost Your Power!",
+                    "buy_1000_credits": "🌌 1000 Credits - Ultimate Experience!"
+                }
+                descriptions = {
+                    "buy_100_credits": "Dive into endless fun with 100 credits.",
+                    "buy_500_credits": "Amplify the thrill with 500 credits.",
+                    "buy_1000_credits": "Unlock all features with 1000 credits!"
+                }
+
+                amount = credit_amounts.get(data, 0)
+                title = titles.get(data, "Credits Pack")
+                description = descriptions.get(data, "Get more credits for more interaction.")
+
+                prices = [{"label": "Service Fee", "amount": amount}]
+                currency = "USD"
+                payload = data
+
+                await send_invoice(
+                    chat_id=chat_id,
+                    title=title,
+                    description=description,
+                    payload=payload,
+                    currency=currency,
+                    prices=prices,
+                    bot_token=bot_token,
+                    start_parameter="example"
+                )
+                
+            data = payload_obj.callback_query.data
+
+            # Depending on the callback data, trigger the corresponding function
+            if data == "generate_photo":
+                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='PHOTO')
+                await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=bot_token)
+            
+            if data == "generate_audio":
+                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='AUDIO')
+                await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
+           
+            if data == "ask_credit":
+                await send_credit_purchase_options(chat_id, bot_token)
+           
+            if data == "reset_yes":
+                await reset_messages_by_chat_id(db=db, chat_id=chat_id)
+                predefined_response_text = "Hi I'm Tabatha! What about you?"
+                await send_telegram_message(chat_id=chat_id,  text=predefined_response_text, bot_token=bot_token)
+
+            return {"status": "Callback query processed successfully"}
+
+
+        if payload_obj.message and payload_obj.message.from_:
+            user_id = payload_obj.message.from_.get('id')
+            chat_id = payload_obj.message.chat['id']
+
+        # Ensure we're dealing with message updates
+
+        if payload_obj.message and payload_obj.message.text == "/generate":
+        
+            await send_generate_options(chat_id, bot_token)
+            return {"status": "Generate command processed"}
+
+        if payload_obj.message and payload_obj.message.text == "/getvoice":
+
+            # Mark the chat as awaiting voice input in the database
+            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='AUDIO')
+
+            # Send a prompt to the user asking for the voice input
+            await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
+
+            return {"status": "Awaiting voice input"}
+
+
+        if payload_obj.message and payload_obj.message.text == "/getphoto":
+
+            # Mark the chat as awaiting photo input in the database
+            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='PHOTO')
+
+            # Send a prompt to the user asking for the text input to generate the photo
+            await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=await get_bot_config(db, return_type='token', bot_id=bot_id ))
+
+            return {"status": "Awaiting text input for photo generation"}
+
+        if payload_obj.message and payload_obj.message.text == "/credits":
+
+            # Retrieve the total credits for the user
+            await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_id))
+            return {"status": "Credits information sent"}
+            
+            
+        if payload_obj.message and payload_obj.message.text == "/payment":
+            
+            await send_credit_purchase_options(chat_id, bot_token)
+            return {"status": "Payment command processed"}
+
+        if payload_obj.message and payload_obj.message.text == "/reset":
+            
+            await send_reset_options(chat_id, bot_token)
+            return {"status": "Send reset command processed"}
+
+
+        # Before the if statement
+        logger.debug(f"PreCheckoutQuery data: {payload_obj.pre_checkout_query}")
+        
+        if 'pre_checkout_query' in payload:
+        #if payload_obj.pre_checkout_query:
+            pre_checkout_query_id = payload_obj.pre_checkout_query.id
+            try:
+                await answer_pre_checkout_query(pre_checkout_query_id, ok=True, bot_token=bot_token)
+                logger.info(f"PreCheckoutQuery {pre_checkout_query_id} answered successfully.")
+            except Exception as e:
+                logger.error(f"Failed to answer PreCheckoutQuery {pre_checkout_query_id}: {e}")
+
+
+            return {"status": "PreCheckoutQuery"}
+
+
+        # Inside your successful payment handling block
+        if payload_obj.message and payload_obj.message.successful_payment:
+            
+            logger.info(f"Inside your successful payment handling block")
+            
+            successful_payment = payload_obj.message.successful_payment
+            invoice_payload = successful_payment.invoice_payload  # This is your key to determine the purchase
+            
+            # Example mapping of invoice_payload to credits
+            credits_options = {
+                "buy_100_credits": 100,
+                "buy_500_credits": 500,
+                "buy_1000_credits": 1000,
+            }
+
+            # Determine the number of credits based on the invoice_payload
+            credits_to_add = credits_options.get(invoice_payload, 0)  # Default to 0 if not found
+            
+            logger.info(f"credits_to_add {credits_to_add} successful_payment {successful_payment} invoice_payload {invoice_payload}")
+            
+            payment_info = {
+                "update_id": payload_obj.update_id,
+                "message_id": payload_obj.message.message_id,
+                "user_id": payload_obj.message.from_.get('id'),
+                "user_is_bot": payload_obj.message.from_.get('is_bot', False),
+                "user_first_name": payload_obj.message.from_.get('first_name', ''),
+                "user_language_code": payload_obj.message.from_.get('language_code', ''),
+                "chat_id": payload_obj.message.chat.get('id'),
+                "chat_first_name": payload_obj.message.chat.get('first_name', ''),
+                "chat_type": payload_obj.message.chat.get('type', ''),
+                "payment_date": datetime.utcfromtimestamp(payload_obj.message.date),
+                "currency": successful_payment.currency,
+                "total_amount": successful_payment.total_amount / 100.0, # Assuming total_amount is in cents
+                "invoice_payload": successful_payment.invoice_payload,
+                "telegram_payment_charge_id": successful_payment.telegram_payment_charge_id,
+                "provider_payment_charge_id": successful_payment.provider_payment_charge_id
+            }
+            # Initialize pk_payment to None
+            pk_payment = None
+            # Log the successful transaction
+            try:
+                pk_payment = await add_payment_details(db, payment_info)
+            except Exception as e:
+                logger.error(f"Failed Log the successful transaction: {e}")
+                
+
+            user_credit_info = {
+                "channel": "TELEGRAM",
+                "pk_bot": bot_id,
+                "user_id": payload_obj.message.from_.get('id'),
+                "chat_id": payload_obj.message.chat.get('id'),
+                "credits": credits_to_add,  # The number of credits to add
+                "transaction_type": "PAYMENT",  # Indicating this is a credit transaction
+                "transaction_date": datetime.utcfromtimestamp(payload_obj.message.date),  # Timestamp of the transaction
+                "pk_payment": pk_payment  # Linking this credit update to the payment record
+            }
+            # Call the function to update user credits
+            try:
+                await update_user_credits(db, user_credit_info)
+            except Exception as e:
+                logger.error(f"Failed to update user credits: {e}")
+
+            try:
+                # After updating user credits successfully
+                confirmation_text = "Thank you for your payment! 💋💋💋"
+                await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
+                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_id))
+
+                logger.info(f"Payment confirmed for chat_id {payload_obj.message.chat['id']}.")
+            except Exception as e:
+                logger.error(f"Failed to process successful payment for chat_id {payload_obj.message.chat['id']}: {e}")
+
+            return {"status": "Payment confirmed "}
+
+
+        if payload_obj.message and payload_obj.message.text not in ['/payment','/start', '/credits'] and payload_obj.message.from_:
+ 
+            chat_id = payload_obj.message.chat.get('id')
+            user_id = payload_obj.message.from_.get('id')
+            
+            # Perform the credit check after determining user_id and chat_id
+            total_credits = await get_latest_total_credits(db=db, user_id=user_id, bot_id=bot_id)
+            if total_credits <= Decimal('0') and payload_obj.update_id != -1:
+                # User does not have enough credits, send a message and stop further processing
+                await send_telegram_message(chat_id, "You don't have enough credits to perform this operation.", bot_token)
+                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=total_credits)
+                return {"status": "Insufficient credits"}
+
+        # Use the username as a fallback for last_name if last_name is not provided
+        last_name_or_username = payload_obj.message.from_.get('last_name', payload_obj.message.from_.get('username', ''))
+        user_data = {
+            'id': payload_obj.message.from_.get('id'),
+            'channel': 'TELEGRAM',
+            'is_bot': payload_obj.message.from_.get('is_bot', False),
+            'first_name': payload_obj.message.from_.get('first_name', ''),
+            'last_name': payload_obj.message.from_.get('last_name', ''),  
+            'username': payload_obj.message.from_.get('username', ''),  # Optional, defaulting to empty string as it's not provided
+            'language_code': payload_obj.message.from_.get('language_code', ''),  # Optional, using .get() in case it's not present
+            'is_premium': False,  # Optional, defaulting to False as it's not provided
+            'pk_bot': bot_id,  # Adding the bot_id as pk_bot
+            'chat_id': chat_id  # Adding chat_id
+        }
+
+        # Insert the user if not exists and check if banned
+        inserted = await insert_user_if_not_exists(db, user_data)
+        if inserted:
+            logger.info(f"User {user_data['id']} inserted.")
+        else:
+            logger.info(f"User {user_data['id']} already exists.")
+
+        if await is_user_banned(db, user_data['id'],bot_id , 'TELEGRAM'):
+
+            await send_error_notification(chat_id, bot_short_name, "Your account is banned.")
+            
+            return {"status": "User is banned"}
+
+
+        logger.info(f"Incoming payload is not a special case, procesing with handling of chat messages")
+        # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
+        await process_message_type(payload_obj.message, chat_id, user_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
+
+
+    except Exception as e:
+        logger.error(f"An error occurred while processing the request: {e}")
+        if chat_id:
+            # Use background_tasks to add an error handling task
+            background_tasks.add_task(send_error_notification, chat_id, bot_short_name, "Sorry, something went wrong. Please try again later.")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+    return {"status": "Message processed successfully"}
+
+End of file: ./app/routers/telegram_webhook.py
+___________
+___________
+Start of file: ./app/schemas.py
+#app/schemas.py
+from pydantic import BaseModel
+from datetime import datetime
+
+class TextMessage(BaseModel):
+    chat_id: int
+    user_id: int
+    bot_id: int
+    message_text: str
+    message_id: int
+    channel: str
+    update_id: int
+End of file: ./app/schemas.py
+___________
+___________
+Start of file: ./app/utils/automatic_reply.py
+import asyncio
+import httpx
+from datetime import datetime
+from app.config import TELEGRAM_SECRET_TOKEN, HOST_URL
+from app.database_operations import get_users_for_auto_reply
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Assuming SQLALCHEMY_DATABASE_URL is your database connection string
+from app.config import SQLALCHEMY_DATABASE_URL
+
+engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True)
+AsyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=AsyncSession)
+
+
+async def keep_service_alive():
+    keep_alive_url = f'{HOST_URL}/keep-alive'  # Update this URL to your keep-alive endpoint
+    async with httpx.AsyncClient() as client:
+        response = await client.get(keep_alive_url)
+        if response.status_code == 200:
+            logger.info("Keep-alive request successful.")
+        else:
+            logger.error(f"Keep-alive request failed. Response status: {response.status_code}")
+async def check_and_trigger_responses():
+    while True:
+        try:
+            await keep_service_alive()  # Make a dummy call to keep the service alive
+            logger.debug("Starting to check for users eligible for automatic replies.")
+            async with AsyncSessionLocal() as db:
+                users = await get_users_for_auto_reply(db)
+                if users:
+                    logger.info(f"Identified {len(users)} users for automatic replies: {users}")
+                else:
+                    logger.info("No users identified for automatic replies at this time.")
+
+                for chat_id, user_id, bot_short_name in users:
+                    payload = {
+                        "update_id": -1,
+                        "message": {
+                            "message_id": -1,
+                            "from": {"id": user_id},
+                            "chat": {"id": chat_id},
+                            "date": int(datetime.utcnow().timestamp()),
+                            "text": "[SYSTEM MESSAGE] Please send a reply to the user based on your previous conversation that will get him excited to continue chatting with you",
+                        }
+                    }
+                    url = f'{HOST_URL}/telegram-webhook/{TELEGRAM_SECRET_TOKEN}/{bot_short_name}'
+
+                    logger.info(f"Sending automatic reply to user_id: {user_id}, chat_id: {chat_id}, via bot: {bot_short_name}")
+                    async with httpx.AsyncClient() as client:
+                        response = await client.post(url, json=payload)
+                        if response.status_code == 200:
+                            logger.info(f"Successfully sent automatic reply to user_id: {user_id}, chat_id: {chat_id}")
+                        else:
+                            logger.error(f"Failed to send automatic reply to user_id: {user_id}, chat_id: {chat_id}. Response status: {response.status_code}")
+
+            logger.debug("Finished sending automatic replies.")
+            await asyncio.sleep(30) 
+        except Exception as e:
+            logger.error(f"An error occurred: {e}")
+            await asyncio.sleep(10)  # Wait a bit before trying again to avoid spamming logs in case of a persistent error.
+End of file: ./app/utils/automatic_reply.py
+___________
+___________
+Start of file: ./app/utils/caption_photo.py
+# app/utils/caption_photo.py
+import aiofiles
+import asyncio
+import httpx
+import logging
+from app.config import HUGGINGFACE_API_TOKEN
+
+logger = logging.getLogger(__name__)
+
+async def get_caption_for_local_photo(photo_file_path: str) -> str:
+    logger.debug(f"Doing caption of {photo_file_path}")
+    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
+    services = [
+        'https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large',
+        'https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning'
+    ]
+    caption = None
+
+    async with httpx.AsyncClient() as client:
+        async with aiofiles.open(photo_file_path, "rb") as file:
+            photo_content = await file.read()
+            for attempt in range(5):
+                for service in services:
+                    try:
+                        caption_resp = await client.post(service, content=photo_content, headers=headers)
+                        caption_resp.raise_for_status()
+                        caption = caption_resp.json()[0]['generated_text']
+                        if caption:
+                            logger.debug(f"Caption generated {caption}")
+                            return caption
+                    except Exception as e:
+                        logger.error(f"Service {service} failed with error: {e}")
+                        await asyncio.sleep(5)  # Wait for 5 seconds before retrying
+    if not caption:
+        raise Exception("Caption service unavailable after 5 attempts.")
+End of file: ./app/utils/caption_photo.py
+___________
+___________
+Start of file: ./app/utils/error_handler.py
+# app/utils/error_handler.py
+from functools import wraps
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from app.controllers.telegram_integration import send_telegram_error_message
+from sqlalchemy.ext.asyncio import AsyncSession
+import logging
+app = FastAPI()
+
+logger = logging.getLogger(__name__)
+
+def error_handler(endpoint):
+    """
+    A decorator to wrap around endpoint functions to catch exceptions,
+    log them, and send an error message to the user.
+    """
+    @wraps(endpoint)
+    async def wrapper(*args, **kwargs):
+        request: Request = kwargs.get('request')
+        background_tasks: BackgroundTasks = kwargs.get('background_tasks')
+        bot_short_name: str = kwargs.get('bot_short_name')
+        try:
+            # Attempt to extract chat_id from the request body for error reporting
+            body = await request.json()
+            chat_id = body.get('message', {}).get('chat', {}).get('id') if body.get('message') else None
+        except:
+            chat_id = None
+        try:
+            return await endpoint(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"An error occurred: {e}")
+            if chat_id:
+                # If we have a chat_id, attempt to notify the user of the error
+                background_tasks.add_task(send_telegram_error_message, chat_id, "Sorry, something went wrong. Please try again later. e003",  bot_short_name)
+            # Re-raise the exception to let FastAPI's global exception handler take over
+            raise
+    return wrapper
+
+
+async def send_error_notification(chat_id: int, bot_short_name: str, error_message: str = "Sorry, something went wrong. Please try again later."):
+    try:
+        
+        await send_telegram_error_message(chat_id, error_message, bot_short_name)
+    except Exception as e:
+        logger.error(f"Failed to send error notification to user: {e}")
+End of file: ./app/utils/error_handler.py
+___________
+___________
+Start of file: ./app/utils/file_list_cache.py
+# app/utils/file_list_cache.py
+import logging
+from datetime import datetime, timedelta
+from b2sdk.v1 import InMemoryAccountInfo, B2Api
+from app.config import B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME
+import asyncio
+from b2sdk.exception import B2Error  # Import B2Error for catching Backblaze B2 specific errors
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+# Cache structure
+cache = {
+    "file_info": {},  # Now maps file paths to file IDs
+    "last_update": datetime.min
+}
+
+# Cache expiration time
+CACHE_EXPIRATION = timedelta(hours=1)  # Example: 1 hour
+
+async def refresh_file_list():
+    # B2 Authentication and Setup
+    info = InMemoryAccountInfo()
+    b2_api = B2Api(info)
+    
+    retry_interval = 60  # Retry every 60 seconds
+    max_retries = 100  # Maximum number of retries
+    attempt_count = 0
+
+    while attempt_count < max_retries:
+        try:
+            b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+            bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+
+            # Initialize an empty dictionary to store file paths and their file IDs
+            file_info = {}
+
+            # Fetch file list from B2 bucket
+            for file_version, _ in bucket.ls(show_versions=False, recursive=True):
+                file_info[file_version.file_name] = file_version.id_
+
+            logger.info("Refreshed file info from B2.")
+            return file_info
+        except B2Error as e:
+            attempt_count += 1
+            logger.error(f"Failed to refresh file list from B2 on attempt {attempt_count}: {e}. Retrying in {retry_interval} seconds...")
+            await asyncio.sleep(retry_interval)  # Wait for retry_interval seconds before retrying
+
+    # After max_retries, log that the operation has failed and return the existing cache if any
+    logger.error(f"Failed to refresh file list from B2 after {max_retries} attempts. Will use the existing cache.")
+    return cache.get("file_info", {})
+
+async def get_cached_file_list():
+    now = datetime.utcnow()
+    if not cache["file_info"] or now - cache["last_update"] > CACHE_EXPIRATION:
+        logger.info("Cache miss, refreshing...")
+        cache["file_info"] = await refresh_file_list()
+        cache["last_update"] = now
+    else:
+        logger.info("Cache hit")
+    return cache["file_info"]End of file: ./app/utils/file_list_cache.py
+___________
+___________
+Start of file: ./app/utils/generate_audio.py
+# app/routers/generate_audio.py
+import requests
+import httpx
+import uuid
+import logging
+import aiofiles 
+import asyncio
+import os
+logger = logging.getLogger(__name__)
+from app.config import ELEVENLABS_KEY, MONSTER_API_TOKEN
+from typing import Optional
+
+
+TEMP_DIR = "./temp_audio_files"  # Temporary storage directory 
+
+async def generate_audio_with_monsterapi(text: str) -> Optional[str]:
+    API_Key = MONSTER_API_TOKEN  # Your MonsterAPI API key
+    url = "https://api.monsterapi.ai/v1/generate/sunoai-bark"
+
+    payload = {
+        "prompt": text
+    }
+
+    headers = {
+        "accept": "application/json",
+        "authorization": f"Bearer {API_Key}"
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # Make the asynchronous POST request for audio generation
+            gen_response = await client.post(url, json=payload, headers=headers)
+            gen_response.raise_for_status()
+            gen_response_json = gen_response.json()
+            logger.info(f"Audio generation initiated: {gen_response_json}")
+
+            process_id = gen_response_json.get('process_id', '')
+            status_url = gen_response_json.get('status_url', '')  # Use the provided status URL
+
+            # Initialize variables for status check loop
+            max_attempts = 5
+            attempt_count = 0
+            status = ''
+
+            # Continuously check for the result
+            while attempt_count < max_attempts and status != 'COMPLETED':
+                await asyncio.sleep(5)  # Wait before checking the status
+                status_response = await client.get(status_url, headers=headers)
+                status_response.raise_for_status()
+                status_json = status_response.json()
+                status = status_json.get('status', '')
+                attempt_count += 1
+
+                if status == 'COMPLETED':
+                    logger.info(f"Audio generation completed: {status_json}")
+                    # Download the audio file and save it locally
+                    audio_url = status_json.get('result', {}).get('output', [])[0]
+                    if audio_url:
+                        audio_filename = f"monsterapi_audio_{uuid.uuid4()}.mp3"
+                        audio_response = await client.get(audio_url)
+                        async with aiofiles.open(audio_filename, 'wb') as audio_file:
+                            await audio_file.write(audio_response.content)
+                        logger.info(f"Audio file saved: {audio_filename}")
+                        return audio_filename  # Return the local path of the downloaded audio file
+                    break
+                elif status == 'FAILED':
+                    logger.error(f"Audio generation failed {status_json}")
+                    return None
+
+            if status != 'COMPLETED':
+                logger.error("Audio generation did not complete in time")
+                return None
+
+    except Exception as e:
+        logger.error(f"Error in generate_audio_with_monsterapi: {e}")
+        return None
+
+        
+async def generate_audio_from_text(text: str, voice_id: str) -> str:
+    
+    logger.debug(f"Generation audio") # Debug statement
+    """
+    Generates an audio file from the provided text using the ElevenLabs API.
+
+    Parameters:
+    - text (str): The text to convert to speech.
+
+    Returns:
+    - str: The file path to the generated audio file.
+    """
+
+    XI_API_KEY = ELEVENLABS_KEY  # Replace with your ElevenLabs API key
+    #voice_id = "TFx9mJ79I0uOwtOH3LV9"  # Hardcoded voice ID
+    voice_id = voice_id  # Hardcoded voice ID Para obtener buscar aca https://api.elevenlabs.io/v1/text-to-speech/UVxc67Ct0LcVox2mvQA1/stream?
+    tts_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+    logger.debug(f"tts_url: {tts_url}")
+    headers = {
+        "Content-Type": "application/json",
+        "xi-api-key": XI_API_KEY
+    }
+    data = {
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.05,
+            "similarity_boost": 1,
+            "style": 0.85
+        }
+    }
+
+    # Ensure the temporary directory exists
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
+
+    response = requests.post(tts_url, json=data, headers=headers, stream=True)
+    if response.status_code == 200:
+        # Save the file in the TEMP_DIR directory
+        filename = f"{TEMP_DIR}/elevenlabs_{uuid.uuid4()}.mp3"
+        with open(filename, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+        logger.debug(f"Audio file saved to {filename}")
+        return filename
+    else:
+        error_message = f"Error from ElevenLabs API: Status Code {response.status_code}, Response: {response.text}"
+        logger.error(error_message)
+        raise Exception(error_message)End of file: ./app/utils/generate_audio.py
+___________
+___________
+Start of file: ./app/utils/generate_photo.py
+# app/utils/generate_photo.py
+import httpx
+import random
+import logging
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import uuid4
+import random
+import asyncio
+from typing import Optional
+from b2sdk.v1 import InMemoryAccountInfo, B2Api
+from app.config import B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, HOST_URL
+from .file_list_cache import get_cached_file_list
+from app.controllers.ai_communication import get_photo_filename
+from datetime import datetime, timedelta
+import os
+import re
+import shutil
+from fastapi import APIRouter, HTTPException, BackgroundTasks
+
+TEMP_DIR = "./temp_files"  # Temporary storage directory
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+
+
+async def generate_photo_from_text(text: str) -> Optional[str]:
+    try:
+        logger.info(f"Generating photo filename from text: {text}")
+        file_name = await get_photo_filename(text)
+        if file_name:
+            logger.info(f"File name generated: {file_name}")
+            temp_file_path = await get_image(file_name)
+            return temp_file_path
+        else:
+            logger.error("No file name returned from get_photo_filename")
+    except Exception as e:
+        logger.error(f"Failed to generate photo from text: {e}")
+    return None
+
+async def get_image(partial_filename: str):
+
+    ensure_temp_dir_exists()
+    # Clean up old files in the temp directory before proceeding
+    cleanup_old_temp_files()
+
+    file_info = await get_cached_file_list()
+    if not file_info:
+        logger.error("No file info available in cache.")
+        return None
+
+    closest_match = None
+    closest_match_len_difference = float('inf')
+
+    # Search for the closest match based on the partial filename
+    #for filename in file_info.keys():
+    #    # Check if the partial filename is part of the actual filename
+    #    if partial_filename in filename:
+    #        # Calculate the difference in length between the search term and the candidate filename
+    #        len_difference = len(filename) - len(partial_filename)
+    #        
+    #        # Update the closest match if this filename is a closer match
+    #        if len_difference < closest_match_len_difference:
+    #            closest_match = filename
+    #            closest_match_len_difference = len_difference
+#
+    closest_match = find_best_match(file_info.keys(), partial_filename)
+
+    # If a match was found, use it
+    if closest_match:
+        logger.info(f"(Matched filename: {closest_match})")
+
+        temp_file_path = os.path.join(TEMP_DIR, str(uuid4()) + "-" + os.path.basename(closest_match))
+
+
+        info = InMemoryAccountInfo()
+        b2_api = B2Api(info)
+        b2_api.authorize_account("production", B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY)
+        bucket = b2_api.get_bucket_by_name(B2_BUCKET_NAME)
+        file_name_prefix = closest_match
+        valid_duration_in_seconds = 3600
+        b2_authorization_token = bucket.get_download_authorization(file_name_prefix, valid_duration_in_seconds)
+
+        b2_file_url = f"https://f005.backblazeb2.com/file/{B2_BUCKET_NAME}/{closest_match}"
+        headers = {"Authorization": b2_authorization_token}
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(b2_file_url, headers=headers)
+
+            if response.status_code == 200:
+                with open(temp_file_path, "wb") as temp_file:
+                    temp_file.write(response.content)
+                
+                # Redirect or serve the file directly here
+                return temp_file_path
+            else:
+                raise HTTPException(status_code=404, detail="File not found or access denied.")
+
+    else:
+        logger.error(f"No filename containing '{partial_filename}' was found in cache.")
+        return None
+
+
+def ensure_temp_dir_exists():
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
+
+def cleanup_old_temp_files():
+    now = datetime.utcnow()
+    threshold = timedelta(seconds=60)  # Files older than this will be deleted
+
+    for filename in os.listdir(TEMP_DIR):
+        file_path = os.path.join(TEMP_DIR, filename)
+        file_mod_time = datetime.utcfromtimestamp(os.path.getmtime(file_path))
+        if now - file_mod_time > threshold:
+            try:
+                os.remove(file_path)
+                logger.info(f"Deleted old temp file: {filename}")
+            except Exception as e:
+                logger.error(f"Failed to delete old temp file: {filename}. Error: {e}")
+
+
+
+def find_best_match(filenames, search_key):
+    """
+    Search for the best match for a given search key among a list of filenames.
+    Incorporates multiple strategies such as exact match, regex, prefix/suffix, and simplified fuzzy matching,
+    returning the top match as a string along with debug information.
+
+    :param filenames: An iterable of filenames to search through.
+    :param search_key: The search key to find matches for.
+    """
+
+    # Ensure filenames is a list to avoid issues with non-reiterable iterables
+    if not isinstance(filenames, list):
+        filenames = list(filenames)
+
+    # Exact match
+    for filename in filenames:
+        if filename == search_key:
+            logger.debug(f"Exact match found: {filename}")
+            return filename
+
+    # Improved regex match
+    search_key_escaped = re.escape(search_key)
+    for filename in filenames:
+        if re.search(search_key_escaped, filename):
+            logger.debug(f"Regex match found: {filename}")
+            return filename
+
+    # Prefix/Suffix match
+    normalized_search_key = search_key.replace('\\', '/')
+    for filename in filenames:
+        normalized_filename = filename.replace('\\', '/')
+        if normalized_filename.startswith(normalized_search_key) or normalized_filename.endswith(normalized_search_key):
+            logger.debug(f"Prefix/Suffix match found: {filename}")
+            return filename
+
+    # Simplified fuzzy match as last resort
+    for filename in filenames:
+        if simplified_fuzzy_match(search_key, filename):
+            logger.debug(f"Fuzzy match found: {filename}")
+            return filename
+
+    # No matches found
+    logger.debug(f"No matches found. Returning a random filename as fallback.")
+    fallback = random.choice(filenames)
+    return fallback
+
+def simplified_fuzzy_match(search_key, filename):
+    """
+    Perform a simplified fuzzy match between the search key and the filename.
+    Counts the number of matching characters, allowing for some mismatches.
+
+    :param search_key: The search key to match.
+    :param filename: The filename to compare against the search key.
+    :return: Boolean indicating if a fuzzy match is found.
+    """
+    match_score = sum(char in filename for char in search_key)
+    tolerance = len(search_key) * 0.6
+    return match_score >= toleranceEnd of file: ./app/utils/generate_photo.py
+___________
+___________
+Start of file: ./app/utils/payment_processor.py
+# In app/utils/payment_processor.py
+
+import stripe
+from app.config import STRIPE_API_KEY
+
+stripe.api_key = STRIPE_API_KEY
+
+def create_payment_intent(amount, currency='usd'):
+    return stripe.PaymentIntent.create(
+        amount=amount,
+        currency=currency,
+        payment_method_types=['card'],
+    )
+End of file: ./app/utils/payment_processor.py
+___________
+___________
+Start of file: ./app/utils/process_audio.py
+# app/routers/process_audio.py
+import asyncio
+import httpx
+import logging
+import os
+import mimetypes
+from app.database_operations import get_bot_config, update_message
+from app.config import TELEGRAM_API_URL, MONSTER_API_TOKEN
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
+import subprocess
+import requests
+from tempfile import NamedTemporaryFile
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from app.controllers.message_processing import process_queue
+
+logger = logging.getLogger(__name__)
+async def transcribe_audio(background_tasks,   message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int,file_id: str, db: AsyncSession) -> Optional[str]:
+    try:
+        bot_token = await get_bot_config( db,return_type='token', bot_id=bot_id)
+        file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
+
+        async with httpx.AsyncClient() as client:
+            file_response = await client.get(file_url)
+            file_response.raise_for_status()
+
+            file_path = file_response.json().get("result", {}).get("file_path", "")
+            full_file_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+
+            logger.info(f"full_file_url {full_file_url}")
+
+            # Convert audio file format
+            converted_file_path = await convert_audio(full_file_url)  # Ensure this uses the same API as PL/SQL function
+
+            # Prepare the file for upload
+            file_name = os.path.basename(converted_file_path)
+            files = {
+                "file": (file_name, open(converted_file_path, "rb"), mimetypes.guess_type(converted_file_path)[0])
+            }
+            payload = {
+                "diarize": "false",
+                "do_sample": "true"
+                #,"language": "en"
+            }
+            headers = {
+                "accept": "application/json",
+                "authorization": f"Bearer {MONSTER_API_TOKEN}"
+            }
+
+            # Send the transcription request
+            transcription_response = await client.post(
+                'https://api.monsterapi.ai/v1/generate/speech2text-v2',
+                data=payload,
+                files=files,
+                headers=headers
+            )
+            response_json = transcription_response.json()
+            logger.debug(f"Monster transcription_response JSON: {response_json}")
+
+
+            transcription_response.raise_for_status()
+            process_id = transcription_response.json().get('process_id', '')
+
+            logger.info(f"Monster process_id {process_id}")
+
+            # Check the status of the transcription in a loop
+            max_attempts = 5
+            attempt_count = 0
+            transcribed_text = ''
+            while attempt_count < max_attempts:
+                await asyncio.sleep(3)  # Non-blocking sleep
+                status_response = await client.get(f'https://api.monsterapi.ai/v1/status/{process_id}',
+                headers=headers)
+                status = status_response.json().get('status', '')
+
+                if status == 'COMPLETED':
+                    
+                    response_json = status_response.json()
+                    logger.debug(f"Monster response_json JSON: {response_json}")
+                    transcribed_text = response_json.get('result', {}).get('text', '')
+                    break
+
+                attempt_count += 1
+                await asyncio.sleep(3)  # Non-blocking sleep
+
+            response_json = status_response.json()
+            logger.info(f"Monster status transcription_response JSON: {response_json}")
+
+            # Handle the response
+            if not transcribed_text:
+                error_message = "[Audio]: Transcription failed or incomplete"
+                logger.error(error_message)
+                await update_message(db, message_pk=message_pk, new_content=error_message)
+            else:
+                logger.info(f"transcribed_text {transcribed_text}")
+                await update_message(db, message_pk=message_pk, new_content=transcribed_text)
+
+            await update_message(db, message_pk=message_pk, new_status="N")
+            os.remove(converted_file_path)
+            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, db=db)
+ 
+    except Exception as e:
+        logger.error(f"Error in transcribe_audio: {e}")
+        await update_message(db, message_pk=message_pk, new_status="E")
+        return None
+
+async def convert_audio(file_url: str) -> str:
+    try:
+        response = requests.get(file_url)
+        if response.status_code != 200:
+            logger.error('Failed to download the file')
+            return ''
+
+        with NamedTemporaryFile(suffix='.oga', delete=True) as input_file:  # Changed to delete=True for cleanup
+            input_file.write(response.content)
+            input_file.flush()  # Ensure all data is written
+
+            # Convert .oga to .ogg
+            output_filename = input_file.name + '.ogg'
+            subprocess.run(['ffmpeg', '-i', input_file.name, output_filename], check=True)
+
+            return output_filename
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f'Failed to convert the file: {e}')
+    except Exception as e:
+        logger.error(f'An error occurred during audio conversion: {e}')
+
+    return ''
+End of file: ./app/utils/process_audio.py
+___________
+___________
+Start of file: ./app/utils/process_photo.py
+# app/utils/process_photo.py
+import asyncio
+import httpx
+import logging
+import os
+import mimetypes
+from app.database_operations import get_bot_config, update_message
+from app.config import TELEGRAM_API_URL, HUGGINGFACE_API_TOKEN
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
+import subprocess
+import requests
+from tempfile import NamedTemporaryFile
+from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from app.controllers.message_processing import process_queue
+
+logger = logging.getLogger(__name__)
+
+async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int, file_id: str, db: AsyncSession, user_caption: Optional[str] = None):
+    try:
+        bot_token = await get_bot_config(db, return_type='token', bot_id=bot_id)
+        file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(file_url)
+            resp.raise_for_status()
+            file_path = resp.json()['result']['file_path']
+            photo_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+            resp = await client.get(photo_url)
+            resp.raise_for_status()
+
+            headers = {"Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}"}
+            services = [
+                'https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-large',
+                'https://api-inference.huggingface.co/models/nlpconnect/vit-gpt2-image-captioning'
+            ]
+            caption = None
+            for attempt in range(5):
+                for service in services:
+                    try:
+                        caption_resp = await client.post(service, content=resp.content, headers=headers)
+                        caption_resp.raise_for_status()
+                        caption = caption_resp.json()[0]['generated_text']
+                        if caption:
+                            break
+                    except Exception as e:
+                        logger.error(f"Service {service} failed with error: {e}")
+                        await asyncio.sleep(5)  # Wait for 5 seconds before retrying
+                if caption:
+                    break
+            
+            if not caption:
+                raise Exception("Caption service unavailable after 5 attempts.")
+
+            caption_text = f"{caption}. {user_caption}" if user_caption else caption
+            logger.info(f"Caption text: {caption_text}")
+            await update_message(db, message_pk=message_pk, new_content=caption_text)
+            await update_message(db, message_pk=message_pk, new_status="N")
+            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, db=db)
+    except Exception as e:
+        logger.error(f"Error in caption_photo: {e}")
+        await update_message(db, message_pk=message_pk, new_status="E")
+
+
+End of file: ./app/utils/process_photo.py
+___________
+___________
+Start of file: ./app/utils/request_classifier.py
+# ./app/utils/request_classifier.py
+import logging
+import spacy
+from app.controllers.telegram_integration import send_request_for_audio, send_request_for_photo
+
+logger = logging.getLogger(__name__)
+# Load your trained spaCy model
+nlp = spacy.load("./spacy_model")
+
+async def is_voice_note_request(text):
+    """
+    Determines if the text is a voice note request.
+    
+    Parameters:
+    text (str): The text to classify.
+    
+    Returns:
+    bool: True if the text is a voice note request, False otherwise.
+    """
+    doc = nlp(text)
+    for ent in doc.ents:
+        if ent.label_ == "VOICE_NOTE_REQUEST":
+            logger.debug("Voice request true")
+            return True
+    logger.debug("Voice request false")
+    return False
+
+async def is_photo_request(text):
+    """
+    Determines if the text is a photo request.
+    
+    Parameters:
+    text (str): The text to classify.
+    
+    Returns:
+    bool: True if the text is a photo request, False otherwise.
+    """
+    doc = nlp(text)
+    for ent in doc.ents:
+        if ent.label_ == "PHOTO_REQUEST":
+            logger.debug("Photo request true")
+            return True
+    logger.debug("Photo request false")
+    return False
+
+
+async def check_intent(  content_text: str,  chat_id: int, bot_token: str
+    ):
+    if await is_voice_note_request(content_text):
+        await send_request_for_audio(chat_id,bot_token)
+    elif await is_photo_request(content_text):
+        await send_request_for_photo(chat_id,bot_token)
+    else:
+        logging.debug("No specific request identified.")
+End of file: ./app/utils/request_classifier.py
+___________
+Binary File: ./app/__init__.py

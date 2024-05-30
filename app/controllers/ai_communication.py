@@ -133,18 +133,19 @@ async def generate_photo_reaction(photo_caption: str, file_name: str, bot_id: in
     """Generate a reaction to a given photo caption and file name."""
 
     assistant_prompt = await get_bot_assistant_prompt(bot_id, db)
+    logger.debug(f"assistant_prompt: {assistant_prompt}")
 
     logger.debug(f"reaction to caption: {photo_caption} filename {file_name}")
     payload = {
         "model": OPENROUTER_MODEL,
         "max_tokens": MAX_TOKENS,
-        "temperature": 0.9,  # Encourages predictability with minimal variability
+        "temperature": 1,  # Encourages predictability with minimal variability
         "top_p": 1,  # Keeps a broad token choice
         "frequency_penalty": 0.7,  # Discourages frequent token repetition
         "repetition_penalty": 1,  # Prevents input token repetition
         "messages": [{
             "role": "system",
-            "content": f"{assistant_prompt} Your first task is react to this photo caption '{photo_caption}' and its file name '{file_name}',  be creative"
+            "content": f"{assistant_prompt} FIRSTS TASKS: [SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] React to this photo of yours caption: '{photo_caption}' and its file name: '{file_name}',  be creative, dont put the caption or the filename just say what you think about it staying in the character [SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS]"
         }]
     }
     response_data = await send_payload_to_openrouter(payload)
