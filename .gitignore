@@ -13,3 +13,6 @@ exportgpt.sh
 file_list2.txt
 list_files copy.bat
 list_files.bat
+DOCS/
+.vs/
+.vscode/
