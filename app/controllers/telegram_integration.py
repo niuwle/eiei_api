@@ -11,11 +11,13 @@ from functools import partial
 
 logger = logging.getLogger(__name__)
 
+currently_processing = {}
+
 async def update_telegram_message(chat_id: int, message_id: int, new_text: str, bot_token: str) -> bool:
    """
    Updates the content of a previously sent message in Telegram.
    """
-   logger.debug(f"update_telegram_message with bot_token: {bot_token}")
+   logger.debug(f"updating telegram message")
    url = f'{TELEGRAM_API_URL}{bot_token}/editMessageText'
    payload = {
        "chat_id": chat_id,
@@ -25,21 +27,31 @@ async def update_telegram_message(chat_id: int, message_id: int, new_text: str, 
 
    return await send_telegram_request(url, payload)
 
+async def send_telegram_message(chat_id: int, text: str, bot_token: str, reply_to_message_id=None) -> Tuple[bool, int]:
+    if currently_processing.get(chat_id, False):
+        logger.debug(f"Detected already another reply waiting")
+        await asyncio.sleep(1)  # Wait and check again
+        return await send_telegram_message(chat_id, text, bot_token, reply_to_message_id)
 
-async def send_telegram_message(chat_id: int, text: str, bot_token: str) -> Tuple[bool, int]:
-   """
-   Sends a text message to a user in Telegram.
-   """
-   logger.debug(f"send_telegram_message with bot_token: {bot_token}")
-   await send_typing_action(chat_id, bot_token)
-
-   typing_delay = calculate_typing_delay(text)
-   await asyncio.sleep(typing_delay)
-
-   url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
-   payload = {"chat_id": chat_id, "text": text}
-
-   return await send_telegram_request(url, payload, get_message_id=True)
+    currently_processing[chat_id] = True
+    try:
+        logger.debug(f"sending telegram message")
+        await send_typing_action(chat_id, bot_token)
+        typing_delay = calculate_typing_delay(text)
+        await asyncio.sleep(typing_delay)
+        url = f'{TELEGRAM_API_URL}{bot_token}/sendMessage'
+        payload = {"chat_id": chat_id, "text": text, "reply_to_message_id": reply_to_message_id}
+        response = await send_telegram_request(url, payload, get_message_id=True)
+        if isinstance(response, tuple) and len(response) == 2:
+            return response
+        else:
+            logger.error(f"Unexpected response from send_telegram_request: {response}")
+            return False, -1
+    except Exception as e:
+        logger.error(f"Error sending Telegram message: {e}")
+        return False, -1
+    finally:
+        currently_processing[chat_id] = False
 
 
 async def send_telegram_error_message(chat_id: int, text: str, bot_token: str) -> bool:
@@ -51,7 +63,7 @@ async def send_telegram_error_message(chat_id: int, text: str, bot_token: str) -
 
 
 async def send_typing_action(chat_id: int, bot_token: str) -> bool:
-   logger.debug(f"send_typing_action with bot_token: {bot_token}")
+   logger.debug(f"send_typing_action")
    url = f'{TELEGRAM_API_URL}{bot_token}/sendChatAction'
    payload = {"chat_id": chat_id, "action": "typing"}
 
@@ -190,7 +202,10 @@ async def send_credit_purchase_options(chat_id: int, bot_token: str):
 
 async def send_request_for_audio(chat_id: int, bot_token: str):
     keyboard = {
-        "inline_keyboard": [[{"text": "Yes, send me a voice note! 🎙️", "callback_data": "generate_audio"}]]
+        "inline_keyboard": [
+            [{"text": "Yes, send me a voice note! 🎙️", "callback_data": "generate_audio"}],
+            [{"text": "Cancel", "callback_data": "cancel_audio"}]  # Added cancel button
+        ]
     }
     text = "Do you want to receive a voice note?"
     payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}
@@ -198,7 +213,10 @@ async def send_request_for_audio(chat_id: int, bot_token: str):
 
 async def send_request_for_photo(chat_id: int, bot_token: str):
     keyboard = {
-        "inline_keyboard": [[{"text": "Yes, show me a photo! 📸", "callback_data": "generate_photo"}]]
+        "inline_keyboard": [
+            [{"text": "Yes, show me a photo! 📸", "callback_data": "generate_photo"}],
+            [{"text": "Cancel", "callback_data": "cancel_photo"}]  # Added cancel button
+        ]
     }
     text = "Do you want to see a photo?"
     payload = {"chat_id": chat_id, "text": text, "reply_markup": keyboard}

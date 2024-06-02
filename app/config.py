@@ -1,4 +1,3 @@
-# app/config.py
 import os
 from dotenv import load_dotenv
 from decimal import Decimal
@@ -25,3 +24,21 @@ CREDIT_COST_TEXT = Decimal(os.getenv("CREDIT_COST_TEXT", "1"))* Decimal('-1')
 B2_APPLICATION_KEY_ID = os.getenv("B2_APPLICATION_KEY_ID") 
 B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY")
 B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
+
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+bot_config = {
+    "bot_id": None,
+    "bot_token": None,
+    "bot_short_name": None,
+    "bot_voice_id": None,
+    "bot_assistant_prompt": None,
+    "bot_greeting_msg": None
+}
+
+def initialize_bot_config(bot_config_data):
+    bot_config.update(bot_config_data)
+    logger.debug(f"Initialized bot_config succesfully")

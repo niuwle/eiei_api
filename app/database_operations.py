@@ -7,7 +7,8 @@ from sqlalchemy import update, and_, func
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Union, Type
-
+from typing import Tuple, Optional
+from app.config import bot_config 
 
 
 from app.models import (
@@ -20,44 +21,30 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-async def get_bot_config(db: AsyncSession, return_type: str = None, bot_id: int = None, bot_short_name: str = None) -> Union[str, int, tuple, None]:
-    try:
-        async with db as session:
-            
-            if bot_id is not None:
-                logger.debug(f"Fetching bot config for bot_id: {bot_id}")
-                query = select(TelegramConfig.bot_token, TelegramConfig.bot_short_name, TelegramConfig.bot_voice_id).where(TelegramConfig.pk_bot == bot_id)
-                result = await session.execute(query)
-                bot_config = result.one_or_none()
-                logger.debug(f"Bot config fetched for bot_id {bot_id}: {bot_config}")
-                if bot_config:
-                    bot_token, bot_short_name, bot_voice_id = bot_config
-                    logger.debug(f"Extracted bot_token: {bot_token}, bot_short_name: {bot_short_name}")
-                    if return_type == 'token':
-                        logger.debug(f"Returning bot_token: {bot_token}")
-                        return bot_token
-                    elif return_type == 'short_name':
-                        logger.debug(f"Returning bot_short_name: {bot_short_name}")
-                        return bot_short_name
-                    elif return_type == 'voice_id':
-                        logger.debug(f"Returning bot_voice_id: {bot_voice_id}")
-                        return bot_voice_id
-                    else:
-                        logger.debug(f"Returning both bot_token and bot_short_name")
-                        return bot_token, bot_short_name
-            elif bot_short_name is not None:
-                logger.debug(f"Fetching bot_id for bot_short_name: {bot_short_name}")
-                query = select(TelegramConfig.pk_bot).where(TelegramConfig.bot_short_name == bot_short_name)
-                result = await session.execute(query)
-                bot_id = result.scalar_one_or_none()
-                logger.debug(f"Fetched bot_id {bot_id} for bot_short_name: {bot_short_name}")
-                return bot_id
-            else:
-                logger.debug("No bot_id or bot_short_name provided")
-                return None
-    except SQLAlchemyError as e:
-        logger.error(f"Database error in get_bot_config: {e}")
-        return None
+async def get_bot_config_by_short_name_full(db: AsyncSession, bot_short_name: str) -> Optional[dict]:
+    query = select(
+        TelegramConfig.pk_bot,
+        TelegramConfig.bot_token,
+        TelegramConfig.bot_short_name,
+        TelegramConfig.bot_voice_id,
+        TelegramConfig.bot_assistant_prompt,
+        TelegramConfig.bot_greeting_msg
+    ).where(TelegramConfig.bot_short_name == bot_short_name)
+    result = await db.execute(query)
+    bot_config_data = result.one_or_none()
+    if bot_config_data:
+        bot_config_dict = {
+            "bot_id": bot_config_data.pk_bot,
+            "bot_token": bot_config_data.bot_token,
+            "bot_short_name": bot_config_data.bot_short_name,
+            "bot_voice_id": bot_config_data.bot_voice_id,
+            "bot_assistant_prompt": bot_config_data.bot_assistant_prompt,
+            "bot_greeting_msg": bot_config_data.bot_greeting_msg
+        }
+        logger.debug(f"Retrieved bot_config succesfully")
+        return bot_config_dict
+    
+    return None 
 
 async def add_messages(db: AsyncSession, messages_info: List[dict]) -> List[Type[tbl_msg]]:
     new_messages = []
@@ -205,6 +192,22 @@ async def get_bot_assistant_prompt(bot_id: int, db: AsyncSession) -> str:
         logger.error(f"Database error in get_bot_assistant_prompt: {e}")
         return ''
 
+async def get_bot_greeting_msg(bot_id: int, db: AsyncSession) -> str:
+    try:
+        query = select(TelegramConfig.bot_greeting_msg).where(TelegramConfig.pk_bot == bot_id)
+        result = await db.execute(query)
+        bot_assistant_prompt = result.scalar_one_or_none()
+
+        if bot_assistant_prompt:
+            logger.info(f"Retrieved bot_greeting_msg for bot_id {bot_id}")
+        else:
+            logger.warning(f"No bot_greeting_msg found for bot_id {bot_id}")
+
+        return bot_assistant_prompt
+    except SQLAlchemyError as e:
+        logger.error(f"Database error in get_greeting_msg: {e}")
+        return ''
+
 
 async def add_payment_details(db: AsyncSession, payment_info: dict) -> int:
     new_payment = Payment(**payment_info)
@@ -230,32 +233,39 @@ async def get_latest_total_credits(db: AsyncSession, user_id: int, bot_id: int) 
         logger.error(f"Database error in get_latest_total_credits: {e}")
         return Decimal(0)
 
-
 async def update_user_credits(db: AsyncSession, user_credit_info: dict) -> None:
-    user_id = user_credit_info['user_id']
-    pk_bot = user_credit_info['pk_bot']
-    credits_to_add = Decimal(user_credit_info['credits'])
+    try:
+        user_id = user_credit_info['user_id']
+        pk_bot = user_credit_info['pk_bot']
+        credits_to_add = Decimal(user_credit_info['credits'])
 
-    logger.debug(f"Updating credits for user_id={user_id}, pk_bot={pk_bot}. Adding credits: {credits_to_add}")
+        logger.debug(f"Updating credits for user_id={user_id}, pk_bot={pk_bot}. Adding credits: {credits_to_add}")
 
-    latest_total_credits = await get_latest_total_credits(db, user_id, pk_bot)
+        latest_total_credits = await get_latest_total_credits(db, user_id, pk_bot)
 
-    if latest_total_credits is None:
-        latest_total_credits = Decimal('0')
-        logger.debug(f"No existing credits found for user_id={user_id}. Initializing to 0.")
+        if latest_total_credits is None:
+            latest_total_credits = Decimal('0')
+            logger.debug(f"No existing credits found for user_id={user_id}. Initializing to 0.")
 
-    updated_total_credits = latest_total_credits + credits_to_add
+        updated_total_credits = latest_total_credits + credits_to_add
 
-    logger.debug(f"User_id={user_id} had {latest_total_credits} credits. After adding {credits_to_add}, new total is {updated_total_credits}.")
+        logger.debug(f"User_id={user_id} had {latest_total_credits} credits. After adding {credits_to_add}, new total is {updated_total_credits}.")
 
-    user_credit_info['total_credits'] = updated_total_credits
+        user_credit_info['total_credits'] = updated_total_credits
 
-    new_credit = UserCredit(**user_credit_info)
-    db.add(new_credit)
-    await db.commit()
+        new_credit = UserCredit(**user_credit_info)
+        db.add(new_credit)
+        await db.commit()
 
-    logger.info(f"Successfully updated credits for user_id={user_id}. New total credits: {updated_total_credits}. Details: {user_credit_info}")
+        logger.info(f"Successfully updated credits for user_id={user_id}. New total credits: {updated_total_credits}. Details: {user_credit_info}")
 
+    except KeyError as e:
+        logger.error(f"Missing key in user_credit_info: {e}")
+    except ValueError as e:
+        logger.error(f"Invalid value for credits: {e}")
+    except Exception as e:
+        logger.error(f"Error updating user credits: {e}")
+        await db.rollback()
 
 async def insert_user_if_not_exists(db: AsyncSession, user_data: dict) -> bool:
     query = select(tbl_150_user_info).where(
@@ -310,9 +320,9 @@ async def is_user_banned(db: AsyncSession, id: int, pk_bot: int, channel: str) -
 
 async def get_users_for_auto_reply(db: AsyncSession) -> set:
     """
-    Fetch users whose last message was sent more than 5 minutes ago.
+    Fetch users whose last message was sent more than X minutes ago.
     """
-    cutoff_time = datetime.utcnow() - timedelta(minutes=240)
+    cutoff_time = datetime.utcnow() - timedelta(minutes=1440)
     user_info_set = set()
 
     try:
@@ -328,7 +338,7 @@ async def get_users_for_auto_reply(db: AsyncSession) -> set:
             .subquery()
         )
 
-        # Then, select those users whose last message was more than 5 minutes ago
+        # Then, select those users whose last message was more than X minutes ago
         query = (
             select(
                 recent_messages_subq.c.chat_id,
@@ -344,7 +354,7 @@ async def get_users_for_auto_reply(db: AsyncSession) -> set:
         for row in rows:
             # Optionally, fetch bot_short_name if needed using the bot_id
             # This might require an additional query per row, consider caching or optimizing
-            bot_short_name =  await get_bot_config(db,  return_type='short_name', bot_id=row.bot_id)   # Simplification for illustration
+            bot_short_name =  bot_config["bot_short_name"]  # Simplification for illustration
             user_info_set.add((row.chat_id, row.user_id, bot_short_name))
 
         return user_info_set

@@ -4,21 +4,24 @@ import httpx
 import logging
 import os
 import mimetypes
-from app.database_operations import get_bot_config, update_message
+from app.database_operations import update_message
 from app.config import TELEGRAM_API_URL, HUGGINGFACE_API_TOKEN
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
+from app.database import get_db
 import subprocess
 import requests
 from tempfile import NamedTemporaryFile
-from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from app.controllers.message_processing import process_queue
+from app.config import bot_config
 
 logger = logging.getLogger(__name__)
 
-async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int, file_id: str, db: AsyncSession, user_caption: Optional[str] = None):
+async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int, file_id: str, db: AsyncSession = Depends(get_db), user_caption: Optional[str] = None):
+
     try:
-        bot_token = await get_bot_config(db, return_type='token', bot_id=bot_id)
+        bot_token = bot_config["bot_token"]
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
         async with httpx.AsyncClient() as client:
             resp = await client.get(file_url)

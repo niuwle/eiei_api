@@ -5,31 +5,32 @@ from app.config import TELEGRAM_SECRET_TOKEN, HOST_URL
 from app.database_operations import get_users_for_auto_reply
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from app.database import get_db
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Assuming SQLALCHEMY_DATABASE_URL is your database connection string
 from app.config import SQLALCHEMY_DATABASE_URL
 
-engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True)
+engine = create_async_engine(SQLALCHEMY_DATABASE_URL, echo=True, pool_size=20, max_overflow=0)
 AsyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=AsyncSession)
 
 
 async def keep_service_alive():
-    keep_alive_url = f'{HOST_URL}/keep-alive'  # Update this URL to your keep-alive endpoint
+    keep_alive_url = f'{HOST_URL}/keep-alive' 
     async with httpx.AsyncClient() as client:
         response = await client.get(keep_alive_url)
         if response.status_code == 200:
             logger.info("Keep-alive request successful.")
         else:
             logger.error(f"Keep-alive request failed. Response status: {response.status_code}")
+            
 async def check_and_trigger_responses():
     while True:
         try:
             await keep_service_alive()  # Make a dummy call to keep the service alive
             logger.debug("Starting to check for users eligible for automatic replies.")
-            async with AsyncSessionLocal() as db:
+            async for db in get_db():
                 users = await get_users_for_auto_reply(db)
                 if users:
                     logger.info(f"Identified {len(users)} users for automatic replies: {users}")

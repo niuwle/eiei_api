@@ -13,6 +13,7 @@ class TelegramConfig(Base):
     bot_voice_id = Column(String(4000))
     bot_assistant_prompt = Column(String(4000))
     bot_pre_prompt = Column(String(4000))
+    bot_greeting_msg = Column(String(4000))
     bot_temperature = Column(Integer)
     bot_presence_penalty = Column(Integer)
     bot_frequency_penalty = Column(Integer)
@@ -21,3 +22,4 @@ class TelegramConfig(Base):
     created_on = Column(DateTime)
     updated_by = Column(String(1000))
     updated_on = Column(DateTime)
+    

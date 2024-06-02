@@ -29,13 +29,19 @@ def error_handler(endpoint):
             return await endpoint(*args, **kwargs)
         except Exception as e:
             logger.error(f"An error occurred: {e}")
-            if chat_id:
-                # If we have a chat_id, attempt to notify the user of the error
-                background_tasks.add_task(send_telegram_error_message, chat_id, "Sorry, something went wrong. Please try again later. e003",  bot_short_name)
+            if chat_id and background_tasks:  # Check if background_tasks is available
+                # If we have a chat_id and background_tasks, attempt to notify the user of the error
+                background_tasks.add_task(send_telegram_error_message, chat_id, "Sorry, something went wrong. Please try again later. e003", bot_short_name)
             # Re-raise the exception to let FastAPI's global exception handler take over
             raise
     return wrapper
 
+
+async def send_error_notification(chat_id: int, bot_short_name: str, error_message: str = "Sorry, something went wrong. Please try again later."):
+    try:
+        await send_telegram_error_message(chat_id, error_message, bot_short_name)
+    except Exception as e:
+        logger.error(f"Failed to send error notification to user: {e}")
 
 async def send_error_notification(chat_id: int, bot_short_name: str, error_message: str = "Sorry, something went wrong. Please try again later."):
     try:

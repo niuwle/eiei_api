@@ -1,3 +1,4 @@
+# app/routers/telegram_webhook.py
 import logging
 import os
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks, Depends
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas import TextMessage
 from app.database import get_db
 from app.database_operations import (
-    check_if_chat_is_awaiting, insert_user_if_not_exists, is_user_banned, add_messages,  get_bot_config, reset_messages_by_chat_id, manage_awaiting_status, get_latest_total_credits, add_payment_details, update_user_credits
+    get_bot_config_by_short_name_full, get_bot_greeting_msg, check_if_chat_is_awaiting, insert_user_if_not_exists, is_user_banned, add_messages, reset_messages_by_chat_id, manage_awaiting_status, get_latest_total_credits, add_payment_details, update_user_credits
 )
 from app.controllers.telegram_integration import send_reset_options, send_credit_count, send_telegram_message, send_credit_purchase_options, send_generate_options, send_invoice, answer_pre_checkout_query
 from app.controllers.message_processing import process_queue
@@ -19,6 +20,12 @@ from decimal import Decimal
 from datetime import datetime
 from app.utils.error_handler import error_handler, send_error_notification
 from app.config import TELEGRAM_SECRET_TOKEN
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from app.config import bot_config, initialize_bot_config
+
+limiter = Limiter(key_func=get_remote_address)
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +100,7 @@ class TelegramWebhookPayload(BaseModel):
 
 router = APIRouter()
 
-
-
-
-async def process_message_type(message_data, chat_id, user_id, message_id, bot_id, bot_short_name, background_tasks, db, payload):
+async def process_message_type(message_data, chat_id, user_id, message_id, bot_id, bot_short_name, background_tasks, db, payload, request):
     message_type, process_task, text_prefix = None, None, ""
     ai_placeholder = "[AI PLACEHOLDER]"
     task_params = {} 
@@ -111,8 +115,8 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         message_type = 'TEXT'
         text_prefix = message_data.text
         if message_data.text == "/start":
-            predefined_response_text = "Hi there! I'm Tabi! What about you? 😉 "
-            await send_telegram_message(chat_id, predefined_response_text, await get_bot_config(db, return_type='token', bot_id=bot_id))
+            predefined_response_text = await get_bot_greeting_msg(bot_id=bot_config["bot_id"], db=db)
+            await send_telegram_message(chat_id, predefined_response_text, bot_config["bot_token"])
             text_prefix = "/start"
             ai_placeholder = predefined_response_text
         else:
@@ -121,16 +125,16 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
                 text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
                 # Adjust process_task and task_params as needed for AUDIO processing
                 process_task = process_queue  
-                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db}
             elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
                 text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
                 text_prefix = f"{message_data.text}"
                 # Adjust process_task and task_params as needed for PHOTO processing
                 process_task = process_queue  
-                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db}
             else:
                 process_task = process_queue
-                task_params = {'chat_id': chat_id, 'bot_id': bot_id, 'user_id': user_id, 'db': db}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db}
                 logger.info(f"task_params text set")
 
     elif message_data.photo:
@@ -138,26 +142,26 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         process_task = caption_photo
         text_prefix = "[PROCESSING PHOTO]"
         user_caption = message_data.caption if message_data.caption else None
-        task_params = { 'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db, 'user_caption': user_caption}
+        task_params = { 'background_tasks': background_tasks,'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id, 'db': db, 'user_caption': user_caption}
 
     elif message_data.document and message_data.document.mime_type.startswith("image/"):
         message_type = 'DOCUMENT'
         process_task = caption_photo
         text_prefix = "[PROCESSING DOCUMENT AS PHOTO]"
         user_caption = message_data.caption if message_data.caption else None
-        task_params = {'background_tasks': background_tasks,'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db,'user_caption': user_caption}
+        task_params = {'background_tasks': background_tasks,'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id, 'db': db,'user_caption': user_caption}
 
     elif message_data.voice:
         message_type = 'AUDIO'
         process_task = transcribe_audio
         text_prefix = "[TRANSCRIBING AUDIO]"
-        task_params = {'background_tasks': background_tasks, 'bot_id': bot_id, 'chat_id': chat_id, 'user_id': user_id, 'db': db}  # common parameters for transcribe_audio
+        task_params = {'background_tasks': background_tasks, 'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id, 'db': db}  # common parameters for transcribe_audio
 
     if message_type:
         
         messages_info = [
-            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
-            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_id, message_text=ai_placeholder, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
+            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_config["bot_id"], message_text=text_prefix, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': message_type, 'role': 'USER', 'is_processed': 'N'},
+            {'message_data': TextMessage(chat_id=chat_id, user_id=user_id, bot_id=bot_config["bot_id"], message_text=ai_placeholder, message_id=message_id, channel="TELEGRAM", update_id=payload['update_id']), 'type': 'TEXT', 'role': 'ASSISTANT', 'is_processed': 'S'}
         ]
 
         logger.info(f"added_messages 1")
@@ -169,26 +173,38 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             if message_data.photo or message_data.voice or message_data.document:
                 task_specific_params['file_id'] = message_data.photo[-1].file_id if message_data.photo else message_data.document.file_id if message_data.document else message_data.voice.file_id
             
-            all_task_params = {**task_params, **task_specific_params}  # Merge common and specific parameters
+            all_task_params = {**task_params, **task_specific_params, 'request': request}  # Merge common and specific parameters
             background_tasks.add_task(process_task, **all_task_params)
             logger.info(f"background_tasks set")
 
 @router.post("/telegram-webhook/{token}/{bot_short_name}")
+@limiter.limit("10/10 seconds")
 @error_handler
 async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, token: str, bot_short_name: str, db: AsyncSession = Depends(get_db)):
     chat_id = None  # Declare chat_id outside the try block for wider scope
     user_id = None  # Similarly, declare user_id for broader access
-    bot_token = None  # Similarly, declare bot_token for broader access
+    
+    logger.debug(f"Received request with token: {token}, bot_short_name: {bot_short_name}")
+    
     if token != TELEGRAM_SECRET_TOKEN:
+        logger.warning("Invalid token received")
         raise HTTPException(status_code=403, detail="Invalid token")
+    
     try:
         payload = await request.json()
         logger.debug('Raw JSON Payload: %s', payload)
+        
         payload_obj = TelegramWebhookPayload(**payload)
-
         logger.debug('Parsed Payload: %s', payload_obj.dict())
-        bot_id = await get_bot_config( db, bot_short_name=bot_short_name)
-        bot_token = await get_bot_config(db,  return_type='token', bot_id=bot_id)
+        
+        async with db as session:
+            try:
+                bot_config_data = await get_bot_config_by_short_name_full(session, bot_short_name)
+            except Exception as e:
+                logger.error(f"Failed to fetch bot config: {e}")
+                raise
+
+        initialize_bot_config(bot_config_data)
 
         # Handling callback_query for inline keyboard responses
         if 'callback_query' in payload:
@@ -229,7 +245,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
                     payload=payload,
                     currency=currency,
                     prices=prices,
-                    bot_token=bot_token,
+                    bot_token=bot_config["bot_token"],
                     start_parameter="example"
                 )
                 
@@ -237,20 +253,20 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             # Depending on the callback data, trigger the corresponding function
             if data == "generate_photo":
-                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='PHOTO')
-                await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=bot_token)
+                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_config["bot_id"], user_id=user_id, awaiting_type='PHOTO')
+                await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=bot_config["bot_token"])
             
             if data == "generate_audio":
-                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='AUDIO')
-                await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
+                await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_config["bot_id"], user_id=user_id, awaiting_type='AUDIO')
+                await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_config["bot_token"])
            
             if data == "ask_credit":
-                await send_credit_purchase_options(chat_id, bot_token)
+                await send_credit_purchase_options(chat_id, bot_config["bot_token"])
            
             if data == "reset_yes":
                 await reset_messages_by_chat_id(db=db, chat_id=chat_id)
-                predefined_response_text = "Hi I'm Tabatha! What about you?"
-                await send_telegram_message(chat_id=chat_id,  text=predefined_response_text, bot_token=bot_token)
+                predefined_response_text = await get_bot_greeting_msg(bot_id=bot_config["bot_id"], db=db)
+                await send_telegram_message(chat_id=chat_id,  text=predefined_response_text, bot_token=bot_config["bot_token"])
 
             return {"status": "Callback query processed successfully"}
 
@@ -263,16 +279,16 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         if payload_obj.message and payload_obj.message.text == "/generate":
         
-            await send_generate_options(chat_id, bot_token)
+            await send_generate_options(chat_id, bot_config["bot_token"])
             return {"status": "Generate command processed"}
 
         if payload_obj.message and payload_obj.message.text == "/getvoice":
 
             # Mark the chat as awaiting voice input in the database
-            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='AUDIO')
+            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_config["bot_id"], user_id=user_id, awaiting_type='AUDIO')
 
             # Send a prompt to the user asking for the voice input
-            await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_token)
+            await send_telegram_message(chat_id=chat_id, text="Please tell me what you want to hear", bot_token=bot_config["bot_token"])
 
             return {"status": "Awaiting voice input"}
 
@@ -280,39 +296,40 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         if payload_obj.message and payload_obj.message.text == "/getphoto":
 
             # Mark the chat as awaiting photo input in the database
-            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_id, user_id=user_id, awaiting_type='PHOTO')
+            await manage_awaiting_status(db, channel='TELEGRAM', chat_id=chat_id, bot_id=bot_config["bot_id"], user_id=user_id, awaiting_type='PHOTO')
 
             # Send a prompt to the user asking for the text input to generate the photo
-            await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token=await get_bot_config(db, return_type='token', bot_id=bot_id ))
+            await send_telegram_message(chat_id=chat_id, text="Please send me the text description for the photo you want to generate", bot_token= bot_config["bot_token"])
 
             return {"status": "Awaiting text input for photo generation"}
 
         if payload_obj.message and payload_obj.message.text == "/credits":
 
             # Retrieve the total credits for the user
-            await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_id))
+            await send_credit_count(chat_id=chat_id, bot_token=bot_config["bot_token"], total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_config["bot_id"]))
             return {"status": "Credits information sent"}
             
             
         if payload_obj.message and payload_obj.message.text == "/payment":
             
-            await send_credit_purchase_options(chat_id, bot_token)
+            await send_credit_purchase_options(chat_id, bot_config["bot_token"])
             return {"status": "Payment command processed"}
 
         if payload_obj.message and payload_obj.message.text == "/reset":
             
-            await send_reset_options(chat_id, bot_token)
+            await send_reset_options(chat_id, bot_config["bot_token"])
             return {"status": "Send reset command processed"}
 
 
-        # Before the if statement
-        logger.debug(f"PreCheckoutQuery data: {payload_obj.pre_checkout_query}")
         
         if 'pre_checkout_query' in payload:
-        #if payload_obj.pre_checkout_query:
+            
+            logger.debug(f"PreCheckoutQuery data: {payload_obj.pre_checkout_query}")
+            
+            #if payload_obj.pre_checkout_query:
             pre_checkout_query_id = payload_obj.pre_checkout_query.id
             try:
-                await answer_pre_checkout_query(pre_checkout_query_id, ok=True, bot_token=bot_token)
+                await answer_pre_checkout_query(pre_checkout_query_id, ok=True, bot_token=bot_config["bot_token"])
                 logger.info(f"PreCheckoutQuery {pre_checkout_query_id} answered successfully.")
             except Exception as e:
                 logger.error(f"Failed to answer PreCheckoutQuery {pre_checkout_query_id}: {e}")
@@ -369,7 +386,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
             user_credit_info = {
                 "channel": "TELEGRAM",
-                "pk_bot": bot_id,
+                "pk_bot": bot_config["bot_id"],
                 "user_id": payload_obj.message.from_.get('id'),
                 "chat_id": payload_obj.message.chat.get('id'),
                 "credits": credits_to_add,  # The number of credits to add
@@ -386,8 +403,8 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             try:
                 # After updating user credits successfully
                 confirmation_text = "Thank you for your payment! 💋💋💋"
-                await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_token)
-                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_id))
+                await send_telegram_message(payload_obj.message.chat['id'], confirmation_text, bot_config["bot_token"])
+                await send_credit_count(chat_id=chat_id, bot_token=bot_config["bot_token"], total_credits=await get_latest_total_credits(db=db,  user_id=user_id, bot_id=bot_config["bot_id"]))
 
                 logger.info(f"Payment confirmed for chat_id {payload_obj.message.chat['id']}.")
             except Exception as e:
@@ -402,11 +419,11 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             user_id = payload_obj.message.from_.get('id')
             
             # Perform the credit check after determining user_id and chat_id
-            total_credits = await get_latest_total_credits(db=db, user_id=user_id, bot_id=bot_id)
+            total_credits = await get_latest_total_credits(db=db, user_id=user_id, bot_id=bot_config["bot_id"])
             if total_credits <= Decimal('0') and payload_obj.update_id != -1:
                 # User does not have enough credits, send a message and stop further processing
-                await send_telegram_message(chat_id, "You don't have enough credits to perform this operation.", bot_token)
-                await send_credit_count(chat_id=chat_id, bot_token=bot_token, total_credits=total_credits)
+                await send_telegram_message(chat_id, "You don't have enough credits to perform this operation.", bot_config["bot_token"])
+                await send_credit_count(chat_id=chat_id, bot_token=bot_config["bot_token"], total_credits=total_credits)
                 return {"status": "Insufficient credits"}
 
         # Use the username as a fallback for last_name if last_name is not provided
@@ -420,7 +437,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
             'username': payload_obj.message.from_.get('username', ''),  # Optional, defaulting to empty string as it's not provided
             'language_code': payload_obj.message.from_.get('language_code', ''),  # Optional, using .get() in case it's not present
             'is_premium': False,  # Optional, defaulting to False as it's not provided
-            'pk_bot': bot_id,  # Adding the bot_id as pk_bot
+            'pk_bot': bot_config["bot_id"],  # Adding the bot_id as pk_bot
             'chat_id': chat_id  # Adding chat_id
         }
 
@@ -431,7 +448,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         else:
             logger.info(f"User {user_data['id']} already exists.")
 
-        if await is_user_banned(db, user_data['id'],bot_id , 'TELEGRAM'):
+        if await is_user_banned(db, user_data['id'],bot_config["bot_id"] , 'TELEGRAM'):
 
             await send_error_notification(chat_id, bot_short_name, "Your account is banned.")
             
@@ -440,7 +457,7 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
 
         logger.info(f"Incoming payload is not a special case, procesing with handling of chat messages")
         # Pass the Pydantic model, chat_id, message_id, bot_id, bot_short_name, background_tasks, and db to process_message_type
-        await process_message_type(payload_obj.message, chat_id, user_id, payload_obj.message.message_id, bot_id, bot_short_name, background_tasks, db, payload)
+        await process_message_type(payload_obj.message, chat_id, user_id, payload_obj.message.message_id, bot_config["bot_id"], bot_short_name, background_tasks, db, payload, request)
 
 
     except Exception as e:
@@ -451,4 +468,5 @@ async def telegram_webhook(background_tasks: BackgroundTasks, request: Request, 
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
     return {"status": "Message processed successfully"}
+
 
