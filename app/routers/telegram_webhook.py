@@ -125,16 +125,16 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
                 text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
                 # Adjust process_task and task_params as needed for AUDIO processing
                 process_task = process_queue  
-                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db, 'request': request}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id}
             elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
                 text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
                 text_prefix = f"{message_data.text}"
                 # Adjust process_task and task_params as needed for PHOTO processing
                 process_task = process_queue  
-                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db, 'request': request}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id}
             else:
                 process_task = process_queue
-                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db, 'request': request}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id}
                 logger.info(f"task_params text set")
 
     elif message_data.photo:
@@ -142,20 +142,20 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
         process_task = caption_photo
         text_prefix = "[PROCESSING PHOTO]"
         user_caption = message_data.caption if message_data.caption else None
-        task_params = { 'background_tasks': background_tasks,'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id, 'db': db, 'user_caption': user_caption}
+        task_params = { 'background_tasks': background_tasks,'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id, 'user_caption': user_caption}
 
     elif message_data.document and message_data.document.mime_type.startswith("image/"):
         message_type = 'DOCUMENT'
         process_task = caption_photo
         text_prefix = "[PROCESSING DOCUMENT AS PHOTO]"
         user_caption = message_data.caption if message_data.caption else None
-        task_params = {'background_tasks': background_tasks,'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id, 'db': db,'user_caption': user_caption}
+        task_params = {'background_tasks': background_tasks,'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id,'user_caption': user_caption}
 
     elif message_data.voice:
         message_type = 'AUDIO'
         process_task = transcribe_audio
         text_prefix = "[TRANSCRIBING AUDIO]"
-        task_params = {'background_tasks': background_tasks, 'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id, 'db': db}  # common parameters for transcribe_audio
+        task_params = {'background_tasks': background_tasks, 'bot_id': bot_config["bot_id"], 'chat_id': chat_id, 'user_id': user_id}  # common parameters for transcribe_audio
 
     if message_type:
         
@@ -173,7 +173,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             if message_data.photo or message_data.voice or message_data.document:
                 task_specific_params['file_id'] = message_data.photo[-1].file_id if message_data.photo else message_data.document.file_id if message_data.document else message_data.voice.file_id
             
-            all_task_params = {**task_params, **task_specific_params}  # Merge common and specific parameters
+            all_task_params = {**task_params, **task_specific_params, 'request': request, 'db': db}  # Merge common and specific parameters
             background_tasks.add_task(process_task, **all_task_params)
             logger.info(f"background_tasks set")
 

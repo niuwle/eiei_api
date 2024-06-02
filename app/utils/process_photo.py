@@ -18,7 +18,7 @@ from app.config import bot_config
 
 logger = logging.getLogger(__name__)
 
-async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int, file_id: str, db: AsyncSession = Depends(get_db), user_caption: Optional[str] = None):
+async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int, file_id: str, request: Request,db: AsyncSession = Depends(get_db), user_caption: Optional[str] = None):
 
     try:
         bot_token = bot_config["bot_token"]
@@ -58,7 +58,7 @@ async def caption_photo(background_tasks, message_pk: int, ai_placeholder_pk: in
             logger.info(f"Caption text: {caption_text}")
             await update_message(db, message_pk=message_pk, new_content=caption_text)
             await update_message(db, message_pk=message_pk, new_status="N")
-            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, db=db)
+            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, request=request, db=db)
     except Exception as e:
         logger.error(f"Error in caption_photo: {e}")
         await update_message(db, message_pk=message_pk, new_status="E")

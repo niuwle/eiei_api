@@ -17,7 +17,7 @@ from app.controllers.message_processing import process_queue
 from app.config import bot_config
 
 logger = logging.getLogger(__name__)
-async def transcribe_audio(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int, file_id: str, db: AsyncSession = Depends(get_db)) -> Optional[str]:
+async def transcribe_audio(background_tasks, message_pk: int, ai_placeholder_pk: int, bot_id: int, chat_id: int, user_id: int, file_id: str, request: Request, db: AsyncSession = Depends(get_db)) -> Optional[str]:
     try:
         bot_token = bot_config["bot_token"]
         file_url = f"{TELEGRAM_API_URL}{bot_token}/getFile?file_id={file_id}"
@@ -99,7 +99,7 @@ async def transcribe_audio(background_tasks, message_pk: int, ai_placeholder_pk:
 
             await update_message(db, message_pk=message_pk, new_status="N")
             os.remove(converted_file_path)
-            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, db=db)
+            background_tasks.add_task(process_queue, chat_id=chat_id, bot_id=bot_id, user_id=user_id, message_pk=message_pk, ai_placeholder_pk=ai_placeholder_pk, request=request, db=db)
  
     except Exception as e:
         logger.error(f"Error in transcribe_audio: {e}")
