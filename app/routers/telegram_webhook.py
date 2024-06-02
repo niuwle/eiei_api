@@ -125,16 +125,16 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
                 text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
                 # Adjust process_task and task_params as needed for AUDIO processing
                 process_task = process_queue  
-                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db, 'request': request}
             elif await check_if_chat_is_awaiting(db=db, chat_id=chat_id, awaiting_type="PHOTO"):
                 text_prefix = f"[SYSTEM MSG: REPLY SHORT MAX 50 CHARACTERS] {message_data.text}"
                 text_prefix = f"{message_data.text}"
                 # Adjust process_task and task_params as needed for PHOTO processing
                 process_task = process_queue  
-                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db, 'request': request}
             else:
                 process_task = process_queue
-                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db}
+                task_params = {'chat_id': chat_id, 'bot_id': bot_config["bot_id"], 'user_id': user_id, 'db': db, 'request': request}
                 logger.info(f"task_params text set")
 
     elif message_data.photo:
@@ -173,7 +173,7 @@ async def process_message_type(message_data, chat_id, user_id, message_id, bot_i
             if message_data.photo or message_data.voice or message_data.document:
                 task_specific_params['file_id'] = message_data.photo[-1].file_id if message_data.photo else message_data.document.file_id if message_data.document else message_data.voice.file_id
             
-            all_task_params = {**task_params, **task_specific_params, 'request': request}  # Merge common and specific parameters
+            all_task_params = {**task_params, **task_specific_params}  # Merge common and specific parameters
             background_tasks.add_task(process_task, **all_task_params)
             logger.info(f"background_tasks set")
 
